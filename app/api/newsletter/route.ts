@@ -89,21 +89,22 @@ function createEmailTemplate(content: string, userName: string) {
 
 export async function POST(request: Request) {
   try {
-    // API 키 확인 (간단한 보안)
     const { searchParams } = new URL(request.url);
     const apiKey = searchParams.get('key');
+    const targetTime = searchParams.get('time'); // 예: "07:00"
     
     if (apiKey !== process.env.CRON_SECRET && apiKey !== 'test') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // 활성 사용자 조회
-    const { data: users, error } = await supabase
+    let query = supabase
       .from('user_profiles')
       .select(`
         id,
         email,
         nickname,
+        send_time,
         user_interests (
           interests (
             name
@@ -112,23 +113,26 @@ export async function POST(request: Request) {
       `)
       .eq('is_active', true);
 
+    // 특정 시간대 사용자만 필터링
+    if (targetTime) {
+      query = query.eq('send_time', targetTime + ':00');
+    }
+
+    const { data: users, error } = await query;
+
     if (error) throw error;
 
     const results = [];
 
     for (const user of users || []) {
       try {
-        // 관심사 추출
         const interests = user.user_interests?.map(
           (ui: any) => ui.interests?.name
         ).filter(Boolean) || [];
 
         if (interests.length === 0) continue;
 
-        // 콘텐츠 생성
         const content = await generateContent(interests);
-
-        // 이메일 발송
         const emailHtml = createEmailTemplate(content, user.nickname || '회원');
         const result = await sendEmail(
           user.email,
@@ -145,6 +149,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ 
       message: `${results.length}명에게 발송 완료`,
+      targetTime: targetTime || 'all',
       results 
     });
 
@@ -154,10 +159,9 @@ export async function POST(request: Request) {
   }
 }
 
-// 테스트용 GET
 export async function GET() {
   return NextResponse.json({ 
     status: 'Newsletter API Ready',
-    usage: 'POST /api/newsletter?key=test'
+    usage: 'POST /api/newsletter?key=test&time=07:00'
   });
 }
