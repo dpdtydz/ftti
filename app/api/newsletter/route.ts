@@ -34,19 +34,19 @@ async function generateContent(interests: string[]): Promise<string> {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '콘텐츠 생성 실패';
 }
 
-// Resend로 이메일 발송
-async function sendEmail(to: string, subject: string, html: string) {
-  const response = await fetch('https://api.resend.com/emails', {
+// Brevo로 이메일 발송
+async function sendEmail(to: string, toName: string, subject: string, html: string) {
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'api-key': process.env.BREVO_API_KEY!,
     },
     body: JSON.stringify({
-      from: 'FTTI <onboarding@resend.dev>',
-      to,
+      sender: { name: 'FTTI', email: 'newsletter@ftti.news' },
+      to: [{ email: to, name: toName }],
       subject,
-      html,
+      htmlContent: html,
     }),
   });
 
@@ -132,6 +132,7 @@ export async function POST(request: Request) {
         const emailHtml = createEmailTemplate(content, user.nickname || '회원');
         const result = await sendEmail(
           user.email,
+          user.nickname || '회원',
           `[FTTI] ${new Date().toLocaleDateString('ko-KR')} 맞춤 뉴스레터`,
           emailHtml
         );

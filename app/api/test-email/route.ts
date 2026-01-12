@@ -16,13 +16,13 @@ export async function GET() {
     const geminiData = await geminiRes.json();
     const geminiOk = !!geminiData.candidates?.[0]?.content;
 
-    // Resend 테스트 (실제 발송 안함)
-    const resendOk = !!process.env.RESEND_API_KEY;
+    // Brevo 테스트
+    const brevoOk = !!process.env.BREVO_API_KEY;
 
     return NextResponse.json({
       gemini: geminiOk ? '✅ 연결됨' : '❌ 실패',
       geminiResponse: geminiData.candidates?.[0]?.content?.parts?.[0]?.text || geminiData.error,
-      resend: resendOk ? '✅ API 키 있음' : '❌ API 키 없음',
+      brevo: brevoOk ? '✅ API 키 있음' : '❌ API 키 없음',
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
