@@ -43,7 +43,7 @@ async function sendEmail(to: string, toName: string, subject: string, html: stri
       'api-key': process.env.BREVO_API_KEY!,
     },
     body: JSON.stringify({
-      sender: { name: 'FTTI', email: 'newsletter@ftti.news' },
+      sender: { name: 'FTTI', email: 'lhs41977@gmail.com' },
       to: [{ email: to, name: toName }],
       subject,
       htmlContent: html,
