@@ -1,29 +1,46 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
-const interests = [
-  { id: 'tech', name: '기술/IT', emoji: '💻' },
-  { id: 'business', name: '비즈니스', emoji: '💼' },
-  { id: 'health', name: '건강', emoji: '🏃' },
-  { id: 'sports', name: '스포츠', emoji: '⚽' },
-  { id: 'entertainment', name: '엔터테인먼트', emoji: '🎬' },
-  { id: 'economy', name: '경제', emoji: '📈' },
-  { id: 'self-development', name: '자기계발', emoji: '📚' },
-  { id: 'food', name: '음식/요리', emoji: '🍳' },
-  { id: 'travel', name: '여행', emoji: '✈️' },
-  { id: 'science', name: '과학', emoji: '🔬' },
-];
+interface Interest {
+  id: string;
+  name: string;
+  emoji: string;
+  category: string;
+}
 
 const times = ['07:00', '08:00', '09:00', '10:00'];
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
+  const [interests, setInterests] = useState<Interest[]>([]);
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState('07:00');
+  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    // Get current user
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+      setUser(user);
+    });
+
+    // Load interests from DB
+    supabase
+      .from('interests')
+      .select('*')
+      .then(({ data }) => {
+        if (data) setInterests(data);
+      });
+  }, [router]);
 
   const toggleInterest = (id: string) => {
     setSelectedInterests((prev) =>
@@ -44,10 +61,42 @@ export default function OnboardingPage() {
   };
 
   const handleComplete = async () => {
-    // TODO: Save to Supabase
-    console.log('Interests:', selectedInterests);
-    console.log('Time:', selectedTime);
-    router.push('/dashboard');
+    if (!user) return;
+    setIsLoading(true);
+
+    try {
+      // Create user profile
+      const { error: profileError } = await supabase
+        .from('user_profiles')
+        .insert({
+          id: user.id,
+          email: user.email,
+          nickname: user.user_metadata?.user_name || user.email?.split('@')[0],
+          send_time: selectedTime + ':00',
+          is_active: true,
+        });
+
+      if (profileError) throw profileError;
+
+      // Add user interests
+      const interestInserts = selectedInterests.map((interestId) => ({
+        user_id: user.id,
+        interest_id: interestId,
+      }));
+
+      const { error: interestError } = await supabase
+        .from('user_interests')
+        .insert(interestInserts);
+
+      if (interestError) throw interestError;
+
+      router.push('/dashboard');
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      alert('저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -81,7 +130,7 @@ export default function OnboardingPage() {
                   <button
                     key={interest.id}
                     onClick={() => toggleInterest(interest.id)}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                    className={`p-4 rounded-xl border-2 text-left transition-all relative ${
                       selectedInterests.includes(interest.id)
                         ? 'border-indigo-600 bg-indigo-50'
                         : 'border-gray-200 hover:border-gray-300'
@@ -186,9 +235,10 @@ export default function OnboardingPage() {
 
                 <button
                   onClick={handleComplete}
-                  className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+                  disabled={isLoading}
+                  className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
                 >
-                  대시보드로 이동
+                  {isLoading ? '저장 중...' : '대시보드로 이동'}
                 </button>
               </div>
             </>
