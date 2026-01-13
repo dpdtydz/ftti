@@ -227,7 +227,7 @@ async function sendEmail(params: {
     body: JSON.stringify({
       sender: {
         name: 'FTTI',
-        email: 'noreply@ftti.app'
+        email: 'lhs41977@gmail.com'
       },
       to: [{
         email: params.to,
