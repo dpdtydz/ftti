@@ -4,6 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 import { getNewsletterGenerator } from '@/app/lib/newsletter-generator';
 import type { NewsArticle } from '@/app/lib/newsletter-generator';
 
+// Next.js 설정
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 // Supabase 클라이언트 생성 함수
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -112,16 +116,20 @@ export async function GET(request: Request) {
         });
 
         // 2-4. 발송 기록 저장
-        await supabase.from('newsletter_sends').insert({
-          user_id: user.id,
-          subject: getSubjectLine(result.newsletter, primaryInterest),
-          content: result.newsletter,
-          trust_score: result.validation.trustScore,
-          engines_used: result.metadata.enginesUsed,
-          processing_time: result.metadata.processingTime,
-          sent_at: new Date().toISOString(),
-          status: 'sent'
-        });
+        try {
+          await supabase.from('newsletter_sends').insert({
+            user_id: user.id,
+            subject: getSubjectLine(result.newsletter, primaryInterest),
+            content: result.newsletter,
+            trust_score: result.validation.trustScore,
+            engines_used: result.metadata.enginesUsed,
+            processing_time: result.metadata.processingTime,
+            sent_at: new Date().toISOString(),
+            status: 'sent'
+          });
+        } catch (error) {
+          console.warn('⚠️ 발송 기록 저장 실패:', error);
+        }
 
         results.success++;
         console.log(`✅ 발송 성공: ${user.email}`);
@@ -134,12 +142,16 @@ export async function GET(request: Request) {
         results.failed++;
 
         // 실패 기록
-        await supabase.from('newsletter_sends').insert({
-          user_id: user.id,
-          status: 'failed',
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-          sent_at: new Date().toISOString()
-        });
+        try {
+          await supabase.from('newsletter_sends').insert({
+            user_id: user.id,
+            status: 'failed',
+            error_message: error instanceof Error ? error.message : 'Unknown error',
+            sent_at: new Date().toISOString()
+          });
+        } catch (insertError) {
+          console.warn('⚠️ 실패 기록 저장 실패:', insertError);
+        }
       }
     }
 
@@ -458,7 +470,7 @@ function generateEmailHTML(params: {
         </div>
         
         <div class="footer">
-            <p>매일 오전 8시 & 오후 6시, 당신의 inbox로 배달됩니다 📬</p>
+            <p>매일 오전 7시 & 오전 10시, 당신의 inbox로 배달됩니다 📬</p>
             <p style="margin-top: 15px;">
                 <a href="https://ftti.app/preferences?id=${userId}">✏️ 관심사 변경</a>
                 <span style="color: #ddd;">|</span>

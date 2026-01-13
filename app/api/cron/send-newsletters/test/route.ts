@@ -4,6 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 import { getNewsletterGenerator } from '@/app/lib/newsletter-generator';
 import type { NewsArticle } from '@/app/lib/newsletter-generator';
 
+// Next.js 설정
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 // Supabase 클라이언트 생성 함수
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
