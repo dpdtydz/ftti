@@ -4,10 +4,17 @@ import { createClient } from '@supabase/supabase-js';
 import { getNewsletterGenerator } from '@/app/lib/newsletter-generator';
 import type { NewsArticle } from '@/app/lib/newsletter-generator';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Supabase 클라이언트 생성 함수
+function getSupabaseClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Supabase 환경변수가 설정되지 않았습니다');
+  }
+  
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 export async function GET(request: Request) {
   try {
@@ -19,6 +26,9 @@ export async function GET(request: Request) {
 
     console.log('🚀 뉴스레터 발송 Cron 시작');
     console.log('⏰ 시간:', new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }));
+
+    // Supabase 클라이언트 초기화
+    const supabase = getSupabaseClient();
 
     // 1. 활성 사용자 조회
     const { data: users, error: usersError } = await supabase
