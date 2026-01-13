@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     // Supabase 클라이언트 초기화
     const supabase = getSupabaseClient();
 
-    // 1. 활성 사용자 조회 (기존 스키마: user_profiles, user_interests, interests)
+    // 1. 활성 사용자 조회
     const { data: users, error: usersError } = await supabase
       .from('user_profiles')
       .select(`
@@ -80,38 +80,69 @@ export async function GET(request: Request) {
     // 2. 각 사용자별 처리
     for (const user of activeUsers) {
       try {
-        // 관심사 추출
+        // 관심사 추출 (전체 관심사 사용)
         const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
-        const primaryInterest = interests[0]; // 첫 번째 관심사를 메인으로 사용
 
         console.log(`\n📧 처리 중: ${user.email} (${interests.join(', ')})`);
 
-        // 2-1. 네이버 뉴스 검색 (첫 번째 관심사 기준)
-        const articles = await fetchNaverNews(primaryInterest);
+        // 2-1. 각 관심사별로 뉴스 수집 (섹션별)
+        const sections = [];
+        
+        for (const interest of interests) {
+          console.log(`\n📰 [${interest}] 뉴스 수집 중...`);
 
-        if (articles.length === 0) {
-          console.log('⚠️ 뉴스 없음, 스킵');
+          let articles: NewsArticle[] = [];
+
+          // IT 관련 키워드 감지
+          const isITRelated = isITKeyword(interest);
+
+          if (isITRelated) {
+            // IT: 요즘IT 2개 + 네이버 1개
+            console.log('  🔍 요즘IT 크롤링...');
+            const yozumArticles = await fetchYozumIT(interest);
+            const naverArticles = await fetchNaverNews(interest);
+            
+            articles = [
+              ...yozumArticles.slice(0, 2),
+              ...naverArticles.slice(0, 1)
+            ];
+            
+            console.log(`  ✅ 요즘IT: ${yozumArticles.length}개, 네이버: ${naverArticles.length}개`);
+          } else {
+            // 일반: 네이버 3개
+            const naverArticles = await fetchNaverNews(interest);
+            articles = naverArticles.slice(0, 3);
+            console.log(`  ✅ 네이버: ${articles.length}개`);
+          }
+
+          if (articles.length === 0) {
+            console.log(`  ⚠️ ${interest}: 뉴스 없음, 스킵`);
+            continue;
+          }
+
+          // 2-2. 뉴스레터 생성 (관심사별)
+          const result = await generator.generate(interest, articles);
+
+          sections.push({
+            interest,
+            newsletter: result.newsletter,
+            trustScore: result.validation.trustScore
+          });
+
+          console.log(`  ✅ ${interest} 생성 완료 (신뢰도: ${result.validation.trustScore}점)`);
+        }
+
+        if (sections.length === 0) {
+          console.log('⚠️ 생성된 섹션 없음, 스킵');
           results.skipped++;
           continue;
         }
 
-        console.log(`📰 수집된 뉴스: ${articles.length}개`);
-
-        // 2-2. 멀티엔진으로 뉴스레터 생성
-        const result = await generator.generate(primaryInterest, articles);
-
-        console.log(`✅ 생성 완료:`);
-        console.log(`   - 신뢰도: ${result.validation.trustScore}점`);
-        console.log(`   - 엔진: ${result.metadata.enginesUsed.join(' → ')}`);
-        console.log(`   - 처리시간: ${result.metadata.processingTime}ms`);
-
-        // 2-3. Brevo로 이메일 발송
+        // 2-3. 통합 이메일 발송
         await sendEmail({
           to: user.email,
           userName: user.nickname || user.email.split('@')[0],
-          interest: primaryInterest,
-          newsletter: result.newsletter,
-          trustScore: result.validation.trustScore,
+          sections,
           userId: user.id
         });
 
@@ -119,11 +150,11 @@ export async function GET(request: Request) {
         try {
           await supabase.from('newsletter_sends').insert({
             user_id: user.id,
-            subject: getSubjectLine(result.newsletter, primaryInterest),
-            content: result.newsletter,
-            trust_score: result.validation.trustScore,
-            engines_used: result.metadata.enginesUsed,
-            processing_time: result.metadata.processingTime,
+            subject: getSubjectLine(sections),
+            content: { sections }, // 섹션별 저장
+            trust_score: Math.round(sections.reduce((sum, s) => sum + s.trustScore, 0) / sections.length),
+            engines_used: ['Groq Llama 3.1 8B', 'Gemini 2.0 Flash', 'Groq Llama 3.3 70B'],
+            processing_time: 0,
             sent_at: new Date().toISOString(),
             status: 'sent'
           });
@@ -178,6 +209,68 @@ export async function GET(request: Request) {
 }
 
 /**
+ * IT 관련 키워드 감지
+ */
+function isITKeyword(interest: string): boolean {
+  const itKeywords = [
+    'IT', 'it', '기술', '개발', 'AI', 'AI/ML', '인공지능',
+    '프로그래밍', '소프트웨어', '하드웨어', '클라우드',
+    'DevOps', '데이터', '보안', '네트워크'
+  ];
+  
+  return itKeywords.some(keyword => interest.includes(keyword));
+}
+
+/**
+ * 요즘IT RSS 크롤링
+ */
+async function fetchYozumIT(interest: string): Promise<NewsArticle[]> {
+  try {
+    const response = await fetch('https://yozm.wishket.com/magazine/feed/');
+    
+    if (!response.ok) {
+      throw new Error(`요즘IT RSS 오류: ${response.status}`);
+    }
+
+    const xmlText = await response.text();
+    
+    // 간단한 XML 파싱 (정규표현식 사용)
+    const items: NewsArticle[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let match;
+
+    while ((match = itemRegex.exec(xmlText)) !== null && items.length < 10) {
+      const itemXml = match[1];
+      
+      const title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] || '';
+      const link = itemXml.match(/<link>(.*?)<\/link>/)?.[1] || '';
+      const description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || '';
+      const pubDate = itemXml.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
+
+      // HTML 태그 제거
+      const cleanDescription = description.replace(/<[^>]*>/g, '').substring(0, 200);
+
+      if (title && link) {
+        items.push({
+          title,
+          description: cleanDescription,
+          link,
+          source: '요즘IT',
+          pubDate
+        });
+      }
+    }
+
+    console.log(`  📡 요즘IT: ${items.length}개 기사 크롤링 완료`);
+    return items;
+
+  } catch (error) {
+    console.error('요즘IT 크롤링 실패:', error);
+    return [];
+  }
+}
+
+/**
  * 네이버 뉴스 검색
  */
 async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
@@ -213,14 +306,16 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
 }
 
 /**
- * Brevo로 이메일 발송
+ * Brevo로 이메일 발송 (여러 섹션)
  */
 async function sendEmail(params: {
   to: string;
   userName: string;
-  interest: string;
-  newsletter: any;
-  trustScore: number;
+  sections: Array<{
+    interest: string;
+    newsletter: any;
+    trustScore: number;
+  }>;
   userId: string;
 }) {
   const brevoApiKey = process.env.BREVO_API_KEY;
@@ -246,7 +341,7 @@ async function sendEmail(params: {
         email: params.to,
         name: params.userName
       }],
-      subject: getSubjectLine(params.newsletter, params.interest),
+      subject: getSubjectLine(params.sections),
       htmlContent: generateEmailHTML(params)
     })
   });
@@ -258,33 +353,32 @@ async function sendEmail(params: {
 }
 
 /**
- * 제목 생성
+ * 제목 생성 (여러 관심사)
  */
-function getSubjectLine(newsletter: any, interest: string): string {
+function getSubjectLine(sections: Array<{ interest: string; newsletter: any }>): string {
   const today = new Date().toLocaleDateString('ko-KR', {
     month: 'long',
     day: 'numeric'
   });
 
-  if (newsletter.mainNews && newsletter.mainNews.length > 0) {
-    const firstNews = newsletter.mainNews[0];
-    return `[${interest}] ${firstNews.emoji} ${firstNews.title}`;
-  }
-
-  return `[${interest}] ${today} 오늘의 뉴스레터`;
+  const interests = sections.map(s => s.interest).join(', ');
+  
+  return `[${interests}] ${today} 오늘의 뉴스레터`;
 }
 
 /**
- * HTML 이메일 생성
+ * HTML 이메일 생성 (여러 섹션)
  */
 function generateEmailHTML(params: {
   userName: string;
-  interest: string;
-  newsletter: any;
-  trustScore: number;
+  sections: Array<{
+    interest: string;
+    newsletter: any;
+    trustScore: number;
+  }>;
   userId: string;
 }): string {
-  const { userName, interest, newsletter, trustScore, userId } = params;
+  const { userName, sections, userId } = params;
   
   const today = new Date().toLocaleDateString('ko-KR', {
     year: 'numeric',
@@ -293,7 +387,8 @@ function generateEmailHTML(params: {
     weekday: 'long'
   });
 
-  // Morning Brew 스타일 HTML 템플릿
+  const interests = sections.map(s => s.interest).join(', ');
+
   return `
 <!DOCTYPE html>
 <html lang="ko">
@@ -333,16 +428,25 @@ function generateEmailHTML(params: {
             margin-bottom: 30px;
             border-left: 4px solid #667eea;
         }
-        .section-title {
-            font-size: 24px;
+        .section {
+            margin-bottom: 50px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .section:last-child {
+            border-bottom: none;
+        }
+        .section-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 20px;
             font-weight: bold;
-            color: #1a1a1a;
-            margin: 30px 0 20px 0;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #667eea;
         }
         .news-item {
-            margin-bottom: 30px;
+            margin-bottom: 25px;
             padding: 20px;
             background: #fafafa;
             border-radius: 8px;
@@ -360,35 +464,32 @@ function generateEmailHTML(params: {
             border-radius: 20px;
             font-size: 12px;
         }
+        .source-badge {
+            background: #4caf50;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
         .read-time { color: #888; font-size: 12px; }
         .news-title {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: bold;
             color: #1a1a1a;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
         }
         .news-summary {
-            font-size: 15px;
+            font-size: 14px;
             color: #444;
             line-height: 1.7;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
         }
         .news-link {
             color: #667eea;
             text-decoration: none;
             font-weight: 500;
+            font-size: 14px;
         }
-        .quick-news {
-            background: #fff8e1;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 4px solid #ffa726;
-            margin: 30px 0;
-        }
-        .quick-news h3 { margin-bottom: 15px; }
-        .quick-news ul { list-style: none; }
-        .quick-news li { padding: 8px 0; border-bottom: 1px solid #ffe0b2; }
-        .quick-news li:last-child { border-bottom: none; }
         .cta-section {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 30px;
@@ -427,34 +528,30 @@ function generateEmailHTML(params: {
         <div class="content">
             <div class="greeting">
                 안녕하세요 <strong>${userName}</strong>님! ☕<br>
-                오늘도 <strong>${interest}</strong> 분야의 핫한 소식을 준비했어요.<br>
+                오늘도 <strong>${interests}</strong> 분야의 핫한 소식을 준비했어요.<br>
                 <span style="color: #888; font-size: 14px;">☀️ 즐거운 하루 되세요!</span>
             </div>
             
-            <h2 class="section-title">📰 오늘의 주요 소식</h2>
-            
-            ${newsletter.mainNews.map((news: any) => `
-                <div class="news-item">
-                    <div class="news-meta">
-                        <span class="category-badge">${news.category}</span>
-                        <span class="read-time">⏱️ ${news.readTime}</span>
+            ${sections.map(section => `
+                <div class="section">
+                    <div class="section-header">
+                        📰 ${section.interest}
                     </div>
-                    <h3 class="news-title">${news.emoji} ${news.title}</h3>
-                    <p class="news-summary">${news.summary}</p>
-                    <a href="${news.sourceLink}" class="news-link">자세히 읽기 →</a>
+                    
+                    ${section.newsletter.mainNews.slice(0, 3).map((news: any) => `
+                        <div class="news-item">
+                            <div class="news-meta">
+                                <span class="category-badge">${news.category}</span>
+                                <span class="source-badge">${news.source || '네이버'}</span>
+                                <span class="read-time">⏱️ ${news.readTime}</span>
+                            </div>
+                            <h3 class="news-title">${news.emoji} ${news.title}</h3>
+                            <p class="news-summary">${news.summary}</p>
+                            <a href="${news.sourceLink}" class="news-link">자세히 읽기 →</a>
+                        </div>
+                    `).join('')}
                 </div>
             `).join('')}
-            
-            ${newsletter.quickNews && newsletter.quickNews.length > 0 ? `
-                <div class="quick-news">
-                    <h3>⚡ 빠른 소식</h3>
-                    <ul>
-                        ${newsletter.quickNews.map((news: any) => `
-                            <li>• <a href="${news.link}">${news.text}</a></li>
-                        `).join('')}
-                    </ul>
-                </div>
-            ` : ''}
             
             <div class="cta-section">
                 <div style="color: white; font-size: 20px; font-weight: bold;">
@@ -476,12 +573,6 @@ function generateEmailHTML(params: {
                 <span style="color: #ddd;">|</span>
                 <a href="https://ftti.app/unsubscribe?id=${userId}">📭 수신거부</a>
             </p>
-            ${trustScore < 70 ? `
-                <p style="margin-top: 15px; color: #ff9800;">
-                    ⚠️ 이 뉴스레터는 AI가 자동 생성한 콘텐츠입니다.<br>
-                    정확한 정보는 원문을 확인해주세요.
-                </p>
-            ` : ''}
             <p style="margin-top: 20px; color: #999; font-size: 11px;">
                 © 2026 FTTI. All rights reserved.
             </p>
