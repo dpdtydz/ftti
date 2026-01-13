@@ -63,8 +63,8 @@ export async function GET(request: Request) {
         )
       `)
       .eq('is_active', true)
-      .eq('send_time', targetTime)  // ⭐ send_time 필터링 추가
-      .limit(3); // 테스트 모드: 최대 3명
+      .eq('send_time', targetTime)
+      .limit(3);
 
     if (usersError) {
       console.error('❌ 사용자 조회 실패:', usersError);
@@ -99,35 +99,25 @@ export async function GET(request: Request) {
     // 2. 각 사용자별 처리
     for (const user of activeUsers) {
       try {
-        // 관심사 추출 (전체 관심사 사용)
         const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
 
         console.log(`\n📧 처리 중: ${user.email} (${interests.join(', ')})`);
         console.log(`   ⏰ send_time: ${user.send_time}`);
 
-        // 2-1. 각 관심사별로 뉴스 수집 (섹션별)
         const sections = [];
         
         for (const interest of interests) {
           console.log(`\n📰 [${interest}] 뉴스 수집 중...`);
 
           let articles: NewsArticle[] = [];
-
-          // IT 관련 키워드 감지
           const isITRelated = isITKeyword(interest);
 
           if (isITRelated) {
-            // IT: 요즘IT 2개 + 네이버 1개
-            console.log('  🔍 요즘IT 크롤링...');
-            const yozumArticles = await fetchYozumIT(interest);
+            // IT: 네이버 3개만 사용 (요즘IT 제거)
+            console.log('  🔍 네이버 IT 뉴스...');
             const naverArticles = await fetchNaverNews(interest);
-            
-            articles = [
-              ...yozumArticles.slice(0, 2),
-              ...naverArticles.slice(0, 1)
-            ];
-            
-            console.log(`  ✅ 요즘IT: ${yozumArticles.length}개, 네이버: ${naverArticles.length}개`);
+            articles = naverArticles.slice(0, 3);
+            console.log(`  ✅ 네이버: ${articles.length}개`);
           } else {
             // 일반: 네이버 3개
             const naverArticles = await fetchNaverNews(interest);
@@ -140,7 +130,6 @@ export async function GET(request: Request) {
             continue;
           }
 
-          // 2-2. 뉴스레터 생성 (관심사별)
           const result = await generator.generate(interest, articles);
 
           sections.push({
@@ -158,7 +147,6 @@ export async function GET(request: Request) {
           continue;
         }
 
-        // 2-3. 통합 이메일 발송
         await sendEmail({
           to: user.email,
           userName: user.nickname || user.email.split('@')[0],
@@ -166,12 +154,11 @@ export async function GET(request: Request) {
           userId: user.id
         });
 
-        // 2-4. 발송 기록 저장
         try {
           await supabase.from('newsletter_sends').insert({
             user_id: user.id,
             subject: getSubjectLine(sections),
-            content: { sections }, // 섹션별 저장
+            content: { sections },
             trust_score: Math.round(sections.reduce((sum, s) => sum + s.trustScore, 0) / sections.length),
             engines_used: ['Groq Llama 3.1 8B', 'Gemini 2.0 Flash', 'Groq Llama 3.3 70B'],
             processing_time: 0,
@@ -184,8 +171,6 @@ export async function GET(request: Request) {
 
         results.success++;
         console.log(`✅ 발송 성공: ${user.email}`);
-
-        // Rate limiting (초당 1건)
         await sleep(1000);
 
       } catch (error) {
@@ -220,118 +205,15 @@ export async function GET(request: Request) {
   }
 }
 
-/**
- * IT 관련 키워드 감지
- */
 function isITKeyword(interest: string): boolean {
   const itKeywords = [
     'IT', 'it', '기술', '개발', 'AI', 'AI/ML', '인공지능',
     '프로그래밍', '소프트웨어', '하드웨어', '클라우드',
     'DevOps', '데이터', '보안', '네트워크'
   ];
-  
   return itKeywords.some(keyword => interest.includes(keyword));
 }
 
-/**
- * 요즘IT RSS 크롤링 (개선 버전)
- */
-async function fetchYozumIT(interest: string): Promise<NewsArticle[]> {
-  try {
-    // AbortController로 타임아웃 구현
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10초 타임아웃
-
-    const response = await fetch('https://yozm.wishket.com/magazine/feed/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-      },
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      console.error(`  ❌ 요즘IT HTTP 오류: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
-    const xmlText = await response.text();
-    
-    if (!xmlText || xmlText.length < 100) {
-      console.error('  ❌ 요즘IT: 빈 응답 또는 너무 짧은 응답');
-      return [];
-    }
-
-    console.log(`  📄 요즘IT: ${(xmlText.length / 1024).toFixed(1)}KB XML 수신`);
-
-    const items: NewsArticle[] = [];
-    const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
-    let match;
-    let itemCount = 0;
-
-    while ((match = itemRegex.exec(xmlText)) !== null && items.length < 10) {
-      itemCount++;
-      const itemXml = match[1];
-      
-      // 여러 패턴 시도 (CDATA 있음/없음)
-      let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
-                || itemXml.match(/<title>(.*?)<\/title>/)?.[1] 
-                || '';
-      
-      let link = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/)?.[1]
-              || itemXml.match(/<link>(.*?)<\/link>/)?.[1]
-              || '';
-      
-      let description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
-                     || itemXml.match(/<description>(.*?)<\/description>/)?.[1]
-                     || '';
-      
-      let pubDate = itemXml.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
-
-      // HTML 태그 제거 및 엔티티 디코딩
-      title = title.replace(/<[^>]*>/g, '').trim();
-      const cleanDescription = description.replace(/<[^>]*>/g, '').trim().substring(0, 200);
-
-      if (title && link) {
-        items.push({
-          title,
-          description: cleanDescription,
-          link,
-          source: '요즘IT',
-          pubDate
-        });
-      }
-    }
-
-    console.log(`  ✅ 요즘IT: 총 ${itemCount}개 항목 발견, ${items.length}개 파싱 성공`);
-    
-    if (items.length === 0 && itemCount > 0) {
-      console.warn(`  ⚠️ 요즘IT: 항목은 있으나 파싱 실패 (첫 아이템 샘플: ${xmlText.substring(xmlText.indexOf('<item'), xmlText.indexOf('<item') + 200)})`);
-    }
-
-    return items;
-
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        console.error('  ❌ 요즘IT: 타임아웃 (10초 초과)');
-      } else {
-        console.error(`  ❌ 요즘IT 크롤링 실패: ${error.message}`);
-      }
-    } else {
-      console.error('  ❌ 요즘IT 크롤링 실패:', error);
-    }
-    return [];
-  }
-}
-
-/**
- * 네이버 뉴스 검색
- */
 async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
   try {
     const response = await fetch(
@@ -364,9 +246,6 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
   }
 }
 
-/**
- * Brevo로 이메일 발송 (여러 섹션)
- */
 async function sendEmail(params: {
   to: string;
   userName: string;
@@ -411,22 +290,17 @@ async function sendEmail(params: {
   }
 }
 
-/**
- * 제목 생성 (여러 관심사)
- */
 function getSubjectLine(sections: Array<{ interest: string; newsletter: any }>): string {
   const today = new Date().toLocaleDateString('ko-KR', {
     month: 'long',
     day: 'numeric'
   });
 
-  const interests = sections.map(s => s.interest).join(', ');\n  
+  const interests = sections.map(s => s.interest).join(', ');
+  
   return `[${interests}] ${today} 오늘의 뉴스레터`;
 }
 
-/**
- * HTML 이메일 생성 (여러 섹션)
- */
 function generateEmailHTML(params: {
   userName: string;
   sections: Array<{
@@ -621,9 +495,6 @@ function generateEmailHTML(params: {
   `;
 }
 
-/**
- * Sleep 유틸리티
- */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
