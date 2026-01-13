@@ -15,7 +15,7 @@ interface Interest {
 export default function DashboardPage() {
   const router = useRouter();
   const [isActive, setIsActive] = useState(true);
-  const [sendTime, setSendTime] = useState('07:00');
+  const [sendTime, setSendTime] = useState('08:00');
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
   const [interests, setInterests] = useState<Interest[]>([]);
@@ -50,7 +50,19 @@ export default function DashboardPage() {
 
       setProfile(profileData);
       setIsActive(profileData.is_active);
-      setSendTime(profileData.send_time?.slice(0, 5) || '07:00');
+      
+      // 기존 시간이 07:00 또는 10:00이면 08:00으로 변경
+      const currentTime = profileData.send_time?.slice(0, 5) || '08:00';
+      const validTime = ['08:00', '09:00'].includes(currentTime) ? currentTime : '08:00';
+      setSendTime(validTime);
+      
+      // DB도 업데이트
+      if (currentTime !== validTime) {
+        await supabase
+          .from('user_profiles')
+          .update({ send_time: validTime + ':00' })
+          .eq('id', user.id);
+      }
 
       // Load user interests
       const { data: userInterests } = await supabase
@@ -216,21 +228,24 @@ export default function DashboardPage() {
               </div>
 
               {/* Time Setting */}
-              <div className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-gray-500" />
-                  <span className="text-gray-700">발송 시간</span>
+              <div className="py-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-3">
+                    <Clock className="w-5 h-5 text-gray-500" />
+                    <span className="text-gray-700">발송 시간</span>
+                  </div>
+                  <select
+                    value={sendTime}
+                    onChange={(e) => handleTimeChange(e.target.value)}
+                    className="px-3 py-1 border border-gray-300 rounded-lg text-gray-700"
+                  >
+                    <option value="08:00">오후 5:00 (17:00)</option>
+                    <option value="09:00">오후 6:00 (18:00)</option>
+                  </select>
                 </div>
-                <select
-                  value={sendTime}
-                  onChange={(e) => handleTimeChange(e.target.value)}
-                  className="px-3 py-1 border border-gray-300 rounded-lg text-gray-700"
-                >
-                  <option value="07:00">오전 7:00</option>
-                  <option value="08:00">오전 8:00</option>
-                  <option value="09:00">오전 9:00</option>
-                  <option value="10:00">오전 10:00</option>
-                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  🌏 한국 시간 기준 (KST)
+                </p>
               </div>
             </div>
           </div>
@@ -245,7 +260,7 @@ export default function DashboardPage() {
               <div className="text-center py-12 text-gray-500">
                 <Mail className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                 <p>아직 받은 뉴스레터가 없어요</p>
-                <p className="text-sm">내일 아침부터 받아보세요!</p>
+                <p className="text-sm">내일부터 받아보세요!</p>
               </div>
             </div>
           </div>
