@@ -11,7 +11,14 @@ jobs:
   run-batch:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Vercel API
-        run: |
-          curl -X GET "https://your-project.vercel.app/api/cron/send-newsletters" \
-          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+      - name: Call Vercel API (8AM)
+      if: github.event.schedule == '0 23 * * *'
+      run: |
+        curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=08:00" \
+        -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+    
+    - name: Call Vercel API (10AM)
+      if: github.event.schedule == '0 1 * * *'
+      run: |
+        curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=10:00" \
+        -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
