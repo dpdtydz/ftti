@@ -51,9 +51,9 @@ export default function DashboardPage() {
       setProfile(profileData);
       setIsActive(profileData.is_active);
       
-      // 기존 시간이 07:00 또는 10:00이면 08:00으로 변경
+      // 기존 시간이 09:00이면 10:00으로 변경
       const currentTime = profileData.send_time?.slice(0, 5) || '08:00';
-      const validTime = ['08:00', '09:00'].includes(currentTime) ? currentTime : '08:00';
+      const validTime = ['08:00', '10:00'].includes(currentTime) ? currentTime : '08:00';
       setSendTime(validTime);
       
       // DB도 업데이트
@@ -239,12 +239,12 @@ export default function DashboardPage() {
                     onChange={(e) => handleTimeChange(e.target.value)}
                     className="px-3 py-1 border border-gray-300 rounded-lg text-gray-700"
                   >
-                    <option value="08:00">오후 5:00 (17:00)</option>
-                    <option value="09:00">오후 6:00 (18:00)</option>
+                    <option value="08:00">오전 8:00 (08:00)</option>
+                    <option value="10:00">오전 10:00 (10:00)</option>
                   </select>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  🌏 한국 시간 기준 (KST)
+                  📬 출근길에 읽기 좋은 시간
                 </p>
               </div>
             </div>
@@ -260,7 +260,7 @@ export default function DashboardPage() {
               <div className="text-center py-12 text-gray-500">
                 <Mail className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                 <p>아직 받은 뉴스레터가 없어요</p>
-                <p className="text-sm">내일부터 받아보세요!</p>
+                <p className="text-sm">내일 아침부터 받아보세요!</p>
               </div>
             </div>
           </div>
