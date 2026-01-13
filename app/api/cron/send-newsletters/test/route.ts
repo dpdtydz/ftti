@@ -234,33 +234,67 @@ function isITKeyword(interest: string): boolean {
 }
 
 /**
- * 요즘IT RSS 크롤링
+ * 요즘IT RSS 크롤링 (개선 버전)
  */
 async function fetchYozumIT(interest: string): Promise<NewsArticle[]> {
   try {
-    const response = await fetch('https://yozm.wishket.com/magazine/feed/');
+    // AbortController로 타임아웃 구현
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000); // 10초 타임아웃
+
+    const response = await fetch('https://yozm.wishket.com/magazine/feed/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+      },
+      signal: controller.signal
+    });
     
+    clearTimeout(timeout);
+
     if (!response.ok) {
-      throw new Error(`요즘IT RSS 오류: ${response.status}`);
+      console.error(`  ❌ 요즘IT HTTP 오류: ${response.status} ${response.statusText}`);
+      return [];
     }
 
     const xmlText = await response.text();
     
-    // 간단한 XML 파싱 (정규표현식 사용)
+    if (!xmlText || xmlText.length < 100) {
+      console.error('  ❌ 요즘IT: 빈 응답 또는 너무 짧은 응답');
+      return [];
+    }
+
+    console.log(`  📄 요즘IT: ${(xmlText.length / 1024).toFixed(1)}KB XML 수신`);
+
     const items: NewsArticle[] = [];
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
     let match;
+    let itemCount = 0;
 
     while ((match = itemRegex.exec(xmlText)) !== null && items.length < 10) {
+      itemCount++;
       const itemXml = match[1];
       
-      const title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] || '';
-      const link = itemXml.match(/<link>(.*?)<\/link>/)?.[1] || '';
-      const description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || '';
-      const pubDate = itemXml.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
+      // 여러 패턴 시도 (CDATA 있음/없음)
+      let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
+                || itemXml.match(/<title>(.*?)<\/title>/)?.[1] 
+                || '';
+      
+      let link = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/)?.[1]
+              || itemXml.match(/<link>(.*?)<\/link>/)?.[1]
+              || '';
+      
+      let description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
+                     || itemXml.match(/<description>(.*?)<\/description>/)?.[1]
+                     || '';
+      
+      let pubDate = itemXml.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
 
-      // HTML 태그 제거
-      const cleanDescription = description.replace(/<[^>]*>/g, '').substring(0, 200);
+      // HTML 태그 제거 및 엔티티 디코딩
+      title = title.replace(/<[^>]*>/g, '').trim();
+      const cleanDescription = description.replace(/<[^>]*>/g, '').trim().substring(0, 200);
 
       if (title && link) {
         items.push({
@@ -273,11 +307,24 @@ async function fetchYozumIT(interest: string): Promise<NewsArticle[]> {
       }
     }
 
-    console.log(`  📡 요즘IT: ${items.length}개 기사 크롤링 완료`);
+    console.log(`  ✅ 요즘IT: 총 ${itemCount}개 항목 발견, ${items.length}개 파싱 성공`);
+    
+    if (items.length === 0 && itemCount > 0) {
+      console.warn(`  ⚠️ 요즘IT: 항목은 있으나 파싱 실패 (첫 아이템 샘플: ${xmlText.substring(xmlText.indexOf('<item'), xmlText.indexOf('<item') + 200)})`);
+    }
+
     return items;
 
   } catch (error) {
-    console.error('요즘IT 크롤링 실패:', error);
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.error('  ❌ 요즘IT: 타임아웃 (10초 초과)');
+      } else {
+        console.error(`  ❌ 요즘IT 크롤링 실패: ${error.message}`);
+      }
+    } else {
+      console.error('  ❌ 요즘IT 크롤링 실패:', error);
+    }
     return [];
   }
 }
@@ -373,8 +420,7 @@ function getSubjectLine(sections: Array<{ interest: string; newsletter: any }>):
     day: 'numeric'
   });
 
-  const interests = sections.map(s => s.interest).join(', ');
-  
+  const interests = sections.map(s => s.interest).join(', ');\n  
   return `[${interests}] ${today} 오늘의 뉴스레터`;
 }
 
