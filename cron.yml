@@ -1,0 +1,17 @@
+name: Fixed Time Newsletter Cron
+
+on:
+  schedule:
+    # 1. UTC 23:00 (한국 오전 8시)
+    # 2. UTC 01:00 (한국 오전 10시)
+    - cron: '0 23,1 * * *'
+  workflow_dispatch: # 필요할 때 수동으로 실행 가능
+
+jobs:
+  run-batch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Vercel API
+        run: |
+          curl -X GET "https://your-project.vercel.app/api/cron/send-newsletters" \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
