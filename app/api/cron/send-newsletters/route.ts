@@ -30,21 +30,35 @@ export async function GET(request: Request) {
     // Supabase 클라이언트 초기화
     const supabase = getSupabaseClient();
 
-    // 1. 활성 사용자 조회
+    // 1. 활성 사용자 조회 (기존 스키마: user_profiles, user_interests, interests)
     const { data: users, error: usersError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('is_active', true)
-      .not('interests', 'is', null);
+      .from('user_profiles')
+      .select(`
+        id,
+        email,
+        nickname,
+        user_interests (
+          interests (
+            name
+          )
+        )
+      `)
+      .eq('is_active', true);
 
     if (usersError) {
       console.error('❌ 사용자 조회 실패:', usersError);
       throw usersError;
     }
 
-    console.log(`📊 발송 대상: ${users?.length || 0}명`);
+    // 관심사가 없는 사용자 필터링
+    const activeUsers = (users || []).filter(user => {
+      const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
+      return interests.length > 0;
+    });
 
-    if (!users || users.length === 0) {
+    console.log(`📊 발송 대상: ${activeUsers.length}명`);
+
+    if (activeUsers.length === 0) {
       return NextResponse.json({
         success: true,
         message: '발송할 사용자가 없습니다',
@@ -60,12 +74,16 @@ export async function GET(request: Request) {
     };
 
     // 2. 각 사용자별 처리
-    for (const user of users) {
+    for (const user of activeUsers) {
       try {
-        console.log(`\n📧 처리 중: ${user.email} (${user.interests})`);
+        // 관심사 추출
+        const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
+        const primaryInterest = interests[0]; // 첫 번째 관심사를 메인으로 사용
 
-        // 2-1. 네이버 뉴스 검색
-        const articles = await fetchNaverNews(user.interests);
+        console.log(`\n📧 처리 중: ${user.email} (${interests.join(', ')})`);
+
+        // 2-1. 네이버 뉴스 검색 (첫 번째 관심사 기준)
+        const articles = await fetchNaverNews(primaryInterest);
 
         if (articles.length === 0) {
           console.log('⚠️ 뉴스 없음, 스킵');
@@ -76,7 +94,7 @@ export async function GET(request: Request) {
         console.log(`📰 수집된 뉴스: ${articles.length}개`);
 
         // 2-2. 멀티엔진으로 뉴스레터 생성
-        const result = await generator.generate(user.interests, articles);
+        const result = await generator.generate(primaryInterest, articles);
 
         console.log(`✅ 생성 완료:`);
         console.log(`   - 신뢰도: ${result.validation.trustScore}점`);
@@ -86,8 +104,8 @@ export async function GET(request: Request) {
         // 2-3. Brevo로 이메일 발송
         await sendEmail({
           to: user.email,
-          userName: user.name || user.email.split('@')[0],
-          interest: user.interests,
+          userName: user.nickname || user.email.split('@')[0],
+          interest: primaryInterest,
           newsletter: result.newsletter,
           trustScore: result.validation.trustScore,
           userId: user.id
@@ -96,7 +114,7 @@ export async function GET(request: Request) {
         // 2-4. 발송 기록 저장
         await supabase.from('newsletter_sends').insert({
           user_id: user.id,
-          subject: getSubjectLine(result.newsletter, user.interests),
+          subject: getSubjectLine(result.newsletter, primaryInterest),
           content: result.newsletter,
           trust_score: result.validation.trustScore,
           engines_used: result.metadata.enginesUsed,
@@ -133,7 +151,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       ...results,
-      total: users.length
+      total: activeUsers.length
     });
 
   } catch (error) {
