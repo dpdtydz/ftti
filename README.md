@@ -1,218 +1,305 @@
-# FTTI - Feel free To Take It
+# 🎯 FTTI - Morning Brew 스타일 멀티엔진 뉴스레터
 
-> 편하게 받아보세요 ✉️
+## 📋 Overview
 
-AI 기반 개인화 뉴스레터 서비스. 관심사에 맞는 최신 정보를 매일 아침 이메일로 받아보세요.
+고품질 AI 뉴스레터 자동 생성 시스템
+- **멀티 AI 엔진**: Groq + Gemini 조합으로 품질 극대화
+- **Morning Brew 스타일**: 읽기 쉽고 매력적인 디자인
+- **완벽한 한국어**: 번역체 제거, 자연스러운 표현
+- **팩트 체크**: 신뢰도 점수로 품질 보장
 
-## 🚀 Features
-
-- **개인화 큐레이션** - AI가 관심사를 분석해 맞춤 정보 제공
-- **매일 자동 발송** - 설정한 시간에 이메일로 발송
-- **다양한 소스** - 요즘IT, 네이버 뉴스 등 큐레이션
-- **무료 플랫폼** - Brevo 무료 플랜 (300통/일)
-
-## 🛠 Tech Stack
-
-- **Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS
-- **UI Components**: shadcn/ui
-- **Auth & DB**: Supabase
-- **Email**: Brevo (SendinBlue)
-- **AI**: Google Gemini 2.5 Flash
-- **News API**: Naver Search API
-- **Deployment**: Vercel
-- **Scheduling**: Vercel Cron Jobs
-
-## 📁 Project Structure
+## 🏗️ Architecture
 
 ```
-app/
-├── page.tsx              # 랜딩 페이지
-├── login/
-│   └── page.tsx          # 로그인
-├── onboarding/
-│   └── page.tsx          # 온보딩 (관심사 선택)
-├── dashboard/
-│   └── page.tsx          # 대시보드 (설정 관리)
-├── privacy/
-│   └── page.tsx          # 개인정보처리방침
-├── terms/
-│   └── page.tsx          # 이용약관
-└── api/
-    ├── newsletter/
-    │   └── route.ts      # 뉴스레터 생성/발송 API
-    └── test-email/
-        └── route.ts      # API 연결 테스트
+Step 1: Groq Llama 3.1 8B (빠른 초안)
+   ↓
+Step 2: Gemini 2.0 Flash (한국어 개선)
+   ↓
+Step 3: Groq Llama 3.3 70B (팩트 체크)
+   ↓
+Result: 고품질 뉴스레터 ✨
 ```
 
-## 🏃 Getting Started
+## 🚀 Quick Start
 
-### 1. 프로젝트 클론 및 설치
+### 1. 저장소 클론
 
 ```bash
-# 저장소 클론
 git clone https://github.com/dpdtydz/ftti.git
 cd ftti
+```
 
-# 의존성 설치
+### 2. 의존성 설치
+
+```bash
 npm install
 ```
 
-### 2. 환경변수 설정
+### 3. 환경변수 설정
 
-`.env.local` 파일 생성:
+```bash
+cp .env.example .env.local
+```
+
+`.env.local` 파일 수정:
 
 ```env
-# Supabase (데이터베이스)
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
-# Naver Search API (뉴스 검색)
-NAVER_CLIENT_ID=your_client_id
-NAVER_CLIENT_SECRET=your_client_secret
+# AI APIs
+GROQ_API_KEY=gsk_your_groq_key
+GEMINI_API_KEY=AIzaSy_your_gemini_key
 
-# Brevo (이메일 발송)
-BREVO_API_KEY=xkeysib-xxxxxxxxxxxxx
+# Naver
+NAVER_CLIENT_ID=your_naver_id
+NAVER_CLIENT_SECRET=your_naver_secret
 
-# Google Gemini API (AI 콘텐츠 생성)
-GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxxxx
+# Brevo
+BREVO_API_KEY=xkeysib_your_brevo_key
 
-# Cron Job 인증
-CRON_SECRET=your_random_secret_string
+# Cron
+CRON_SECRET=your-secret-string
 ```
 
-#### API Key 발급 방법
-
-| 서비스 | 발급 URL | 설명 |
-|--------|----------|------|
-| Supabase | [대시보드](https://supabase.com/dashboard) | 프로젝트 생성 후 Settings → API |
-| Naver | [개발자센터](https://developers.naver.com/apps) | 애플리케이션 등록 → 검색 API |
-| Brevo | [API Keys](https://app.brevo.com/settings/keys/api) | v3 API Key (무료 300통/일) |
-| Gemini | [AI Studio](https://aistudio.google.com/app/apikey) | API Key 생성 |
-
-### 3. 로컬 개발 서버 실행
+### 4. Supabase 스키마 적용
 
 ```bash
-npm run dev
+# Supabase 대시보드에서 SQL Editor 열기
+# supabase/migrations/002_newsletter_sends.sql 실행
 ```
 
-브라우저에서 http://localhost:3000 접속
-
-### 4. API 연결 테스트
+### 5. 로컬 테스트
 
 ```bash
-curl http://localhost:3000/api/test-email
+# 뉴스레터 생성 테스트
+npm run test:newsletter
 ```
 
-모든 API가 정상 연결되면:
-```json
+## 📁 File Structure
+
+```
+ftti/
+├── app/
+│   ├── lib/
+│   │   └── newsletter-generator.ts  ⭐ 멀티엔진 생성기
+│   └── api/
+│       └── cron/
+│           └── send-newsletters/
+│               └── route.ts          ⭐ Cron Job
+├── scripts/
+│   └── test-newsletter.ts           ⭐ 테스트 스크립트
+├── supabase/
+│   └── migrations/
+│       └── 002_newsletter_sends.sql ⭐ DB 스키마
+└── .env.example
+```
+
+## 🎨 Key Features
+
+### 1. 멀티엔진 생성 프로세스
+
+```typescript
+// app/lib/newsletter-generator.ts
+
+const generator = getNewsletterGenerator();
+const result = await generator.generate(interest, articles);
+
+// 결과
 {
-  "gemini": "✅ 연결됨",
-  "brevo": "✅ 연결됨",
-  "naver": "✅ 연결됨"
+  newsletter: {
+    mainNews: [...],    // 주요 뉴스 3-5개
+    quickNews: [...]    // 빠른 뉴스 3-5개
+  },
+  validation: {
+    trustScore: 85,     // 신뢰도 점수
+    verified: true,
+    issues: []
+  },
+  metadata: {
+    enginesUsed: ['Groq', 'Gemini', 'Groq'],
+    processingTime: 3500  // ms
+  }
 }
 ```
 
-## 🔧 Vercel 배포 설정
+### 2. Morning Brew 스타일 템플릿
 
-### 1. Vercel 프로젝트 연결
+```html
+<!-- 깔끔한 디자인 -->
+<div class="header">
+  <div class="logo">🎯 FTTI</div>
+  <div class="tagline">당신의 관심사, AI가 매일 큐레이션</div>
+</div>
+
+<!-- 친근한 인사 -->
+<div class="greeting">
+  안녕하세요 이호상님! ☕
+  오늘도 AI 분야의 핫한 소식을 준비했어요.
+</div>
+
+<!-- 읽기 쉬운 뉴스 -->
+<div class="news-item">
+  <h3>🚀 OpenAI, GPT-5 공개</h3>
+  <p>첫 문장. 두 번째 문장. 세 번째 문장.</p>
+  <a href="...">자세히 읽기 →</a>
+</div>
+```
+
+### 3. 고품질 프롬프트
+
+```typescript
+// 번역체 제거 규칙
+❌ "~에 대해", "~에 있어", "~에 관해"
+✅ "~을", "~에서", "~에 대한"
+
+// 톤앤매너
+- 친근하고 대화하듯이 (존댓말)
+- 한 문장 20단어 이내
+- 복잡한 문장 → 두 문장으로 분리
+
+// 품질 체크
+- 제목: 20자 이내
+- 요약: 2-3문장
+- 이모지: 각 뉴스당 1개
+```
+
+## 📊 Analytics Dashboard (Week 7-8)
+
+### Supabase Views 활용
+
+```sql
+-- 전체 성과
+SELECT * FROM newsletter_dashboard
+ORDER BY date DESC
+LIMIT 7;
+
+-- 관심사별 성과
+SELECT * FROM newsletter_by_interest
+ORDER BY open_rate DESC;
+```
+
+### 주요 지표
+
+| 지표 | 목표 | 현재 |
+|------|------|------|
+| Open Rate | 40%+ | - |
+| Click Rate | 10%+ | - |
+| Trust Score | 80+ | - |
+| Unsubscribe | <2% | - |
+
+## 🔧 Advanced Usage
+
+### A/B 테스트
+
+```typescript
+// 제목 A/B 테스트
+const subjectA = "[AI] 🚀 OpenAI, GPT-5 공개";
+const subjectB = "[AI] OpenAI가 공개한 GPT-5 소식";
+
+// 사용자를 랜덤하게 A/B 그룹으로 분할
+const group = Math.random() < 0.5 ? 'A' : 'B';
+
+await supabase.from('newsletter_sends').insert({
+  user_id: user.id,
+  subject: group === 'A' ? subjectA : subjectB,
+  ab_test_id: testId,
+  ab_group: group
+});
+```
+
+### 발송 시간 최적화
+
+```typescript
+// 시간대별 오픈율 분석
+const { data } = await supabase
+  .from('newsletter_sends')
+  .select('sent_at, opened_at')
+  .not('opened_at', 'is', null);
+
+// 가장 높은 오픈율 시간대 찾기
+const bestHour = analyzeBestSendTime(data);
+console.log(`최적 발송 시간: ${bestHour}시`);
+```
+
+## 📈 Cost Analysis
+
+### 무료 할당량 (100명 기준)
+
+| 엔진 | 모델 | RPM | 월 사용량 | 비용 |
+|------|------|-----|-----------|------|
+| Groq | Llama 3.1 8B | 30K | 6K | $0 |
+| Gemini | 2.0 Flash | 15 RPM | 6K | $0 |
+| Groq | Llama 3.3 70B | 6K | 6K | $0 |
+
+**총 비용: $0/월** ✨
+
+### 스케일링 (1,000명)
+
+- Groq: 무료 (충분한 할당량)
+- Gemini: $0.075 (Flash)
+- **총 비용: ~$5/월**
+
+## 🚨 Troubleshooting
+
+### 1. API 키 오류
 
 ```bash
-npm i -g vercel
-vercel
+# .env.local 확인
+cat .env.local | grep API_KEY
+
+# 키가 올바른지 확인
+echo $GROQ_API_KEY
 ```
 
-### 2. 환경변수 설정
-
-Vercel Dashboard → Settings → Environment Variables에서 위의 모든 환경변수 추가
-
-**중요**: Production, Preview, Development 모두 체크!
-
-### 3. Cron Job 설정
-
-`vercel.json` (이미 설정됨):
-```json
-{
-  "crons": [
-    {
-      "path": "/api/newsletter?time=07:00",
-      "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/newsletter?time=08:00",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/newsletter?time=09:00",
-      "schedule": "0 9 * * *"
-    }
-  ]
-}
-```
-
-매일 07:00, 08:00, 09:00 (UTC)에 자동 실행
-
-### 4. 배포 확인
+### 2. Supabase 연결 오류
 
 ```bash
-curl https://ftti-umber.vercel.app/api/test-email
+# URL과 키 확인
+echo $NEXT_PUBLIC_SUPABASE_URL
+echo $NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-## 📊 Database Schema (Supabase)
+### 3. 뉴스레터 생성 실패
 
-### Tables
-
-#### `interests`
-```sql
-- id: uuid (PK)
-- name: text (관심사 이름)
-- category: text (카테고리)
-- description: text (설명)
+```typescript
+// Fallback 모드 확인
+// newsletter-generator.ts에서 자동으로 Gemini 단독 모드로 전환됨
 ```
 
-#### `user_profiles`
-```sql
-- id: uuid (PK, FK → auth.users)
-- email: text
-- nickname: text
-- send_time: time (발송 시간)
-- is_active: boolean (활성화 여부)
-- created_at: timestamp
-```
+## 🎯 Roadmap
 
-#### `user_interests`
-```sql
-- user_id: uuid (FK → user_profiles)
-- interest_id: uuid (FK → interests)
-- created_at: timestamp
-```
+### Week 1-2: 템플릿 개선 ✅
+- [x] Morning Brew 스타일 HTML
+- [x] 멀티엔진 시스템
+- [x] 고품질 프롬프트
 
-## 🐛 Troubleshooting
+### Week 3-4: Referral Program
+- [ ] 추천 링크 생성
+- [ ] 보상 시스템
+- [ ] 리더보드
 
-### 환경변수가 인식되지 않는 경우
+### Week 5-6: 인터랙티브 요소
+- [ ] 오늘의 퀴즈
+- [ ] 독자 투표
+- [ ] 피드백 버튼
 
-1. **로컬**: `.env.local` 파일이 프로젝트 루트에 있는지 확인
-2. **Vercel**: 
-   - Dashboard → Settings → Environment Variables 확인
-   - 재배포 (Redeploy) 실행
-3. **테스트**: `/api/test-email` 호출하여 연결 상태 확인
+### Week 7-8: 분석 & 최적화 ✅
+- [x] 성과 대시보드
+- [x] A/B 테스트
+- [x] 시간 최적화
 
-### Cron Job이 실행되지 않는 경우
+## 📞 Support
 
-1. Vercel Dashboard → Cron 탭에서 실행 로그 확인
-2. `CRON_SECRET` 환경변수가 설정되어 있는지 확인
-3. 사용자의 `send_time`이 Cron 스케줄과 일치하는지 확인
-
-### 이메일이 발송되지 않는 경우
-
-1. Brevo 대시보드에서 발송 로그 확인
-2. API Key가 올바른지 확인
-3. 발신자 이메일(lhs41977@gmail.com) 인증 확인
+- GitHub Issues: https://github.com/dpdtydz/ftti/issues
+- Email: your-email@example.com
 
 ## 📄 License
 
 MIT
 
-## 🔗 Links
+---
 
-- **Live Demo**: https://ftti-umber.vercel.app
-- **GitHub**: https://github.com/dpdtydz/ftti
+Made with ❤️ by 이호상
