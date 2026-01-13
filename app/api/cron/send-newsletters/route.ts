@@ -29,25 +29,38 @@ export async function GET(request: Request) {
     }
 
     console.log('🚀 뉴스레터 발송 Cron 시작');
-    console.log('⏰ 시간:', new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }));
+    
+    // 현재 한국 시간 (HH:00:00 형식)
+    const now = new Date();
+    const kstTime = now.toLocaleString('ko-KR', { 
+      timeZone: 'Asia/Seoul',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+    
+    console.log(`⏰ 현재 한국 시간: ${kstTime}`);
 
     // Supabase 클라이언트 초기화
     const supabase = getSupabaseClient();
 
-    // 1. 활성 사용자 조회
+    // 1. send_time이 현재 시간과 일치하는 활성 사용자만 조회
     const { data: users, error: usersError } = await supabase
       .from('user_profiles')
       .select(`
         id,
         email,
         nickname,
+        send_time,
         user_interests (
           interests (
             name
           )
         )
       `)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('send_time', kstTime);
 
     if (usersError) {
       console.error('❌ 사용자 조회 실패:', usersError);
@@ -60,13 +73,14 @@ export async function GET(request: Request) {
       return interests.length > 0;
     });
 
-    console.log(`📊 발송 대상: ${activeUsers.length}명`);
+    console.log(`📊 발송 대상: ${activeUsers.length}명 (send_time: ${kstTime})`);
 
     if (activeUsers.length === 0) {
       return NextResponse.json({
         success: true,
-        message: '발송할 사용자가 없습니다',
-        sent: 0
+        message: `${kstTime}에 발송할 사용자가 없습니다`,
+        sent: 0,
+        currentTime: kstTime
       });
     }
 
@@ -194,7 +208,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       ...results,
-      total: activeUsers.length
+      total: activeUsers.length,
+      currentTime: kstTime
     });
 
   } catch (error) {
