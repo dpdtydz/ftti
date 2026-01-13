@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { headers } from 'next/headers';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -75,7 +76,7 @@ async function fetchNaverNews(query: string): Promise<Article[]> {
     const data = await response.json();
     
     return (data.items || []).map((item: any) => ({
-      title: item.title.replace(/<[^>]*>/g, '').replace(/&quot;/g, '"'),
+      title: item.title.replace(/<[^>]*>/g, '').replace(/&quot;/g, '\"'),
       url: item.link,
       description: item.description.replace(/<[^>]*>/g, '').substring(0, 100),
     }));
@@ -241,7 +242,17 @@ export async function POST(request: Request) {
     const apiKey = searchParams.get('key');
     const targetTime = searchParams.get('time');
     
-    if (apiKey !== process.env.CRON_SECRET && apiKey !== 'test') {
+    // Vercel Cron Job 인증 (x-vercel-cron-id 헤더 확인)
+    const headersList = await headers();
+    const cronId = headersList.get('x-vercel-cron-id');
+    
+    // Cron Job에서 호출되거나 올바른 API 키인 경우만 허용
+    const isAuthorized = 
+      cronId || // Vercel Cron Job
+      apiKey === process.env.CRON_SECRET || // 올바른 시크릿
+      apiKey === 'test'; // 테스트용
+    
+    if (!isAuthorized) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -305,6 +316,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       message: `${results.length}명에게 발송 완료`,
       targetTime: targetTime || 'all',
+      cronTriggered: !!cronId,
       results 
     });
 

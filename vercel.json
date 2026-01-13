@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/newsletter?time=07:00",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/newsletter?time=08:00",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/newsletter?time=09:00",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/newsletter?time=10:00",
+      "schedule": "0 10 * * *"
+    }
+  ]
+}
