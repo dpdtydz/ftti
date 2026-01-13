@@ -109,7 +109,7 @@ export async function GET(request: Request) {
 
           if (isITRelated) {
             // IT: GeekNews 1개 + 네이버 2개 + GitHub Trending 1개
-            console.log('  🔍 IT 전문 뉴스 수집...');
+            console.log('  🔍 IT 전문 뉴스 수집 시작...');
             
             const [geekArticles, naverArticles, githubArticle] = await Promise.all([
               fetchGeekNews(),
@@ -123,12 +123,14 @@ export async function GET(request: Request) {
               ...(githubArticle ? [githubArticle] : [])
             ];
             
-            console.log(`  ✅ GeekNews: ${geekArticles.length}개, 네이버: ${naverArticles.length}개, GitHub: ${githubArticle ? 1 : 0}개`);
+            console.log(`  📊 수집 결과: GeekNews ${geekArticles.length}개 | 네이버 ${naverArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
+            console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
           } else {
             // 일반: 네이버 3개
+            console.log('  🔍 네이버 뉴스 검색 중...');
             const naverArticles = await fetchNaverNews(interest);
             articles = naverArticles.slice(0, 3);
-            console.log(`  ✅ 네이버: ${articles.length}개`);
+            console.log(`  ✅ 네이버: ${articles.length}개 수집`);
           }
 
           if (articles.length === 0) {
@@ -221,12 +223,19 @@ function isITKeyword(interest: string): boolean {
 }
 
 /**
- * GeekNews RSS 크롤링
+ * GeekNews RSS 크롤링 (상세 로그)
  */
 async function fetchGeekNews(): Promise<NewsArticle[]> {
+  const startTime = Date.now();
+  
   try {
+    console.log('  📡 [GeekNews] 크롤링 시작...');
+    
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => {
+      controller.abort();
+      console.log('  ⏱️ [GeekNews] 타임아웃 (10초)');
+    }, 10000);
 
     const response = await fetch('https://news.hada.io/rss', {
       headers: {
@@ -237,18 +246,24 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
     });
     
     clearTimeout(timeout);
+    const elapsed = Date.now() - startTime;
 
     if (!response.ok) {
-      console.error(`  ❌ GeekNews HTTP 오류: ${response.status}`);
+      console.log(`  ❌ [GeekNews] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
+      console.log(`  📍 [GeekNews] URL: https://news.hada.io/rss`);
       return [];
     }
 
     const xmlText = await response.text();
+    console.log(`  📦 [GeekNews] 응답 수신: ${(xmlText.length / 1024).toFixed(1)}KB (${elapsed}ms)`);
+
     const items: NewsArticle[] = [];
     const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
     let match;
+    let totalItems = 0;
 
     while ((match = itemRegex.exec(xmlText)) !== null && items.length < 5) {
+      totalItems++;
       const itemXml = match[1];
       
       let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
@@ -275,24 +290,43 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
       }
     }
 
-    console.log(`  📡 GeekNews: ${items.length}개 수집`);
+    console.log(`  ✅ [GeekNews] 성공: 총 ${totalItems}개 발견, ${items.length}개 파싱 (${elapsed}ms)`);
+    if (items.length > 0) {
+      console.log(`  📰 [GeekNews] 첫 기사: "${items[0].title.substring(0, 40)}..."`);
+    }
+    
     return items;
 
   } catch (error) {
-    console.error('  ❌ GeekNews 실패:', error);
+    const elapsed = Date.now() - startTime;
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.log(`  ⏱️ [GeekNews] 타임아웃 (${elapsed}ms)`);
+      } else {
+        console.log(`  ❌ [GeekNews] 에러: ${error.message} (${elapsed}ms)`);
+      }
+    } else {
+      console.log(`  ❌ [GeekNews] 알 수 없는 에러 (${elapsed}ms)`);
+    }
     return [];
   }
 }
 
 /**
- * GitHub Trending - 최근 인기 프로젝트 (한 줄 설명)
+ * GitHub Trending 크롤링 (상세 로그)
  */
 async function fetchGitHubTrending(): Promise<NewsArticle | null> {
+  const startTime = Date.now();
+  
   try {
+    console.log('  🐙 [GitHub] Trending 크롤링 시작...');
+    
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => {
+      controller.abort();
+      console.log('  ⏱️ [GitHub] 타임아웃 (10초)');
+    }, 10000);
 
-    // GitHub Trending API (비공식)
     const response = await fetch('https://api.gitterapp.com/repositories?language=&since=daily', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -302,32 +336,36 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     });
     
     clearTimeout(timeout);
+    const elapsed = Date.now() - startTime;
 
     if (!response.ok) {
-      console.error(`  ❌ GitHub Trending HTTP 오류: ${response.status}`);
+      console.log(`  ❌ [GitHub] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
+      console.log(`  📍 [GitHub] URL: https://api.gitterapp.com/repositories`);
       return null;
     }
 
     const repos = await response.json();
+    console.log(`  📦 [GitHub] 응답 수신: ${Array.isArray(repos) ? repos.length : 0}개 프로젝트 (${elapsed}ms)`);
     
     if (!Array.isArray(repos) || repos.length === 0) {
+      console.log(`  ⚠️ [GitHub] 빈 응답`);
       return null;
     }
 
-    // 포크 수 기준 정렬 (최근 + 인기)
     const sortedRepos = repos
-      .filter((r: any) => r.forks > 100) // 최소 100개 이상
+      .filter((r: any) => r.forks > 100)
       .sort((a: any, b: any) => b.forks - a.forks);
 
     if (sortedRepos.length === 0) {
+      console.log(`  ⚠️ [GitHub] 포크 100+ 프로젝트 없음`);
       return null;
     }
 
     const topRepo = sortedRepos[0];
-    
-    // 한 줄 설명 생성
     const oneLiner = `${topRepo.name}: ${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars.toLocaleString()}, 🍴 ${topRepo.forks.toLocaleString()})`;
 
+    console.log(`  ✅ [GitHub] 성공: ${topRepo.name} (⭐ ${topRepo.stars.toLocaleString()}, 🍴 ${topRepo.forks.toLocaleString()}) (${elapsed}ms)`);
+    
     return {
       title: `🔥 ${topRepo.name}`,
       description: oneLiner,
@@ -337,13 +375,29 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     };
 
   } catch (error) {
-    console.error('  ❌ GitHub Trending 실패:', error);
+    const elapsed = Date.now() - startTime;
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.log(`  ⏱️ [GitHub] 타임아웃 (${elapsed}ms)`);
+      } else {
+        console.log(`  ❌ [GitHub] 에러: ${error.message} (${elapsed}ms)`);
+      }
+    } else {
+      console.log(`  ❌ [GitHub] 알 수 없는 에러 (${elapsed}ms)`);
+    }
     return null;
   }
 }
 
+/**
+ * 네이버 뉴스 검색 (상세 로그)
+ */
 async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
+  const startTime = Date.now();
+  
   try {
+    console.log(`  🔍 [네이버] "${interest}" 검색 시작...`);
+    
     const response = await fetch(
       `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(interest)}&display=10&sort=date`,
       {
@@ -354,13 +408,26 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
       }
     );
 
+    const elapsed = Date.now() - startTime;
+
     if (!response.ok) {
-      throw new Error(`네이버 API 오류: ${response.status}`);
+      console.log(`  ❌ [네이버] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
+      const errorText = await response.text();
+      console.log(`  📍 [네이버] 에러 응답: ${errorText.substring(0, 100)}`);
+      return [];
     }
 
     const data = await response.json();
+    const items = data.items || [];
+    
+    console.log(`  ✅ [네이버] 성공: ${items.length}개 검색됨 (${elapsed}ms)`);
+    
+    if (items.length > 0) {
+      const firstTitle = items[0].title.replace(/<[^>]*>/g, '').substring(0, 40);
+      console.log(`  📰 [네이버] 최신 기사: "${firstTitle}..."`);
+    }
 
-    return data.items.map((item: any) => ({
+    return items.map((item: any) => ({
       title: item.title.replace(/<[^>]*>/g, ''),
       description: item.description.replace(/<[^>]*>/g, ''),
       link: item.link,
@@ -369,7 +436,12 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
     }));
 
   } catch (error) {
-    console.error('네이버 뉴스 검색 실패:', error);
+    const elapsed = Date.now() - startTime;
+    if (error instanceof Error) {
+      console.log(`  ❌ [네이버] 에러: ${error.message} (${elapsed}ms)`);
+    } else {
+      console.log(`  ❌ [네이버] 알 수 없는 에러 (${elapsed}ms)`);
+    }
     return [];
   }
 }
