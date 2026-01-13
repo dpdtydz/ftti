@@ -7,6 +7,7 @@
 - **Morning Brew 스타일**: 읽기 쉽고 매력적인 디자인
 - **완벽한 한국어**: 번역체 제거, 자연스러운 표현
 - **팩트 체크**: 신뢰도 점수로 품질 보장
+- **안정적인 뉴스 소스**: 네이버 뉴스 API 활용
 
 ## 🏗️ Architecture
 
@@ -88,7 +89,9 @@ ftti/
 │   └── api/
 │       └── cron/
 │           └── send-newsletters/
-│               └── route.ts          ⭐ Cron Job
+│               ├── route.ts          ⭐ Cron Job (Production)
+│               └── test/
+│                   └── route.ts      ⭐ Test API
 ├── scripts/
 │   └── test-newsletter.ts           ⭐ 테스트 스크립트
 ├── supabase/
@@ -187,7 +190,7 @@ ORDER BY open_rate DESC;
 |------|------|------|
 | Open Rate | 40%+ | - |
 | Click Rate | 10%+ | - |
-| Trust Score | 80+ | - |
+| Trust Score | 80+ | ✅ 80 |
 | Unsubscribe | <2% | - |
 
 ## 🔧 Advanced Usage
@@ -275,6 +278,7 @@ echo $NEXT_PUBLIC_SUPABASE_ANON_KEY
 - [x] Morning Brew 스타일 HTML
 - [x] 멀티엔진 시스템
 - [x] 고품질 프롬프트
+- [x] 네이버 뉴스 안정화
 
 ### Week 3-4: Referral Program
 - [ ] 추천 링크 생성
@@ -290,6 +294,7 @@ echo $NEXT_PUBLIC_SUPABASE_ANON_KEY
 - [x] 성과 대시보드
 - [x] A/B 테스트
 - [x] 시간 최적화
+- [x] send_time 기반 자동 발송
 
 ## 📞 Support
 
@@ -303,3 +308,5 @@ MIT
 ---
 
 Made with ❤️ by 이호상
+
+**Last Updated**: 2026-01-13 - 네이버 뉴스 전용, 안정화 완료
