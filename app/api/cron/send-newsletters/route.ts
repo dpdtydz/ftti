@@ -102,10 +102,32 @@ export async function GET(request: Request) {
         for (const interest of interests) {
           console.log(`\n📰 [${interest}] 뉴스 수집 중...`);
 
-          // 모든 관심사에 대해 네이버 뉴스만 사용
-          const naverArticles = await fetchNaverNews(interest);
-          const articles = naverArticles.slice(0, 3);
-          console.log(`  ✅ 네이버: ${articles.length}개`);
+          let articles: NewsArticle[] = [];
+          const isITRelated = isITKeyword(interest);
+
+          if (isITRelated) {
+            // IT: GeekNews 1개 + 네이버 2개 + GitHub Trending 1개
+            console.log('  🔍 IT 전문 뉴스 수집...');
+            
+            const [geekArticles, naverArticles, githubArticle] = await Promise.all([
+              fetchGeekNews(),
+              fetchNaverNews(interest),
+              fetchGitHubTrending()
+            ]);
+            
+            articles = [
+              ...geekArticles.slice(0, 1),
+              ...naverArticles.slice(0, 2),
+              ...(githubArticle ? [githubArticle] : [])
+            ];
+            
+            console.log(`  ✅ GeekNews: ${geekArticles.length}개, 네이버: ${naverArticles.length}개, GitHub: ${githubArticle ? 1 : 0}개`);
+          } else {
+            // 일반: 네이버 3개
+            const naverArticles = await fetchNaverNews(interest);
+            articles = naverArticles.slice(0, 3);
+            console.log(`  ✅ 네이버: ${articles.length}개`);
+          }
 
           if (articles.length === 0) {
             console.log(`  ⚠️ ${interest}: 뉴스 없음, 스킵`);
@@ -192,6 +214,127 @@ export async function GET(request: Request) {
       },
       { status: 500 }
     );
+  }
+}
+
+function isITKeyword(interest: string): boolean {
+  const itKeywords = [
+    'IT', 'it', '기술', '개발', 'AI', 'AI/ML', '인공지능',
+    '프로그래밍', '소프트웨어', '하드웨어', '클라우드',
+    'DevOps', '데이터', '보안', '네트워크'
+  ];
+  return itKeywords.some(keyword => interest.includes(keyword));
+}
+
+async function fetchGeekNews(): Promise<NewsArticle[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch('https://news.hada.io/rss', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+      },
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.error(`  ❌ GeekNews HTTP 오류: ${response.status}`);
+      return [];
+    }
+
+    const xmlText = await response.text();
+    const items: NewsArticle[] = [];
+    const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
+    let match;
+
+    while ((match = itemRegex.exec(xmlText)) !== null && items.length < 5) {
+      const itemXml = match[1];
+      
+      let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
+                || itemXml.match(/<title>(.*?)<\/title>/)?.[1] 
+                || '';
+      
+      let link = itemXml.match(/<link>(.*?)<\/link>/)?.[1] || '';
+      
+      let description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
+                     || itemXml.match(/<description>(.*?)<\/description>/)?.[1]
+                     || '';
+      
+      title = title.replace(/<[^>]*>/g, '').trim();
+      const cleanDescription = description.replace(/<[^>]*>/g, '').trim().substring(0, 200);
+
+      if (title && link) {
+        items.push({
+          title,
+          description: cleanDescription,
+          link,
+          source: 'GeekNews',
+          pubDate: new Date().toISOString()
+        });
+      }
+    }
+
+    console.log(`  📡 GeekNews: ${items.length}개 수집`);
+    return items;
+
+  } catch (error) {
+    console.error('  ❌ GeekNews 실패:', error);
+    return [];
+  }
+}
+
+async function fetchGitHubTrending(): Promise<NewsArticle | null> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch('https://api.gitterapp.com/repositories?language=&since=daily', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json'
+      },
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.error(`  ❌ GitHub Trending HTTP 오류: ${response.status}`);
+      return null;
+    }
+
+    const repos = await response.json();
+    
+    if (!Array.isArray(repos) || repos.length === 0) {
+      return null;
+    }
+
+    const sortedRepos = repos
+      .filter((r: any) => r.forks > 100)
+      .sort((a: any, b: any) => b.forks - a.forks);
+
+    if (sortedRepos.length === 0) {
+      return null;
+    }
+
+    const topRepo = sortedRepos[0];
+    const oneLiner = `${topRepo.name}: ${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars.toLocaleString()}, 🍴 ${topRepo.forks.toLocaleString()})`;
+
+    return {
+      title: `🔥 ${topRepo.name}`,
+      description: oneLiner,
+      link: topRepo.url,
+      source: 'GitHub Trending',
+      pubDate: new Date().toISOString()
+    };
+
+  } catch (error) {
+    console.error('  ❌ GitHub Trending 실패:', error);
+    return null;
   }
 }
 
@@ -451,7 +594,7 @@ function generateEmailHTML(params: {
                         📰 ${section.interest}
                     </div>
                     
-                    ${section.newsletter.mainNews.slice(0, 3).map((news: any) => `
+                    ${section.newsletter.mainNews.slice(0, 4).map((news: any) => `
                         <div class="news-item">
                             <div class="news-meta">
                                 <span class="category-badge">${news.category}</span>
