@@ -1,4 +1,4 @@
-# 🎯 FTTI - Morning Brew 스타일 멀티엔진 뉴스레터
+# 🎯 FTTI - 멀티엔진 뉴스레터
 
 ## 📋 Overview
 
