@@ -1,12 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/newsletter?time=08:00",
+      "path": "/api/cron/send-newsletters",
       "schedule": "0 23 * * *"
     },
     {
-      "path": "/api/newsletter?time=10:00",
-      "schedule": "0 1 * * *"
+      "path": "/api/cron/send-newsletters",
+      "schedule": "0 9 * * *"
     }
   ]
 }
