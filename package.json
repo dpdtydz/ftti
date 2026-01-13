@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "NODE_OPTIONS='--no-deprecation' next dev",
+    "build": "NODE_OPTIONS='--no-deprecation' next build",
+    "start": "NODE_OPTIONS='--no-deprecation' next start",
     "lint": "next lint",
-    "test:newsletter": "tsx scripts/test-newsletter.ts"
+    "test:newsletter": "NODE_OPTIONS='--no-deprecation' tsx scripts/test-newsletter.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
