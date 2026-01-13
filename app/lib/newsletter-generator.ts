@@ -4,15 +4,34 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // 환경변수 체크
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-if (!GROQ_API_KEY || !GEMINI_API_KEY) {
+// Gemini API 키 로테이션 (여러 개 지원)
+// GEMINI_API_KEYS="key1,key2,key3" 또는 GEMINI_API_KEY="single_key"
+const GEMINI_API_KEYS_RAW = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
+const GEMINI_API_KEYS = GEMINI_API_KEYS_RAW.split(',').map(k => k.trim()).filter(Boolean);
+
+if (!GROQ_API_KEY || GEMINI_API_KEYS.length === 0) {
   console.warn('⚠️ API 키가 설정되지 않았습니다');
 }
 
+console.log(`🔑 Gemini API 키: ${GEMINI_API_KEYS.length}개 로드됨`);
+
 // 클라이언트 초기화
 const groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
-const gemini = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+
+// Gemini 클라이언트 풀 (여러 키)
+const geminiClients = GEMINI_API_KEYS.map(key => new GoogleGenerativeAI(key));
+let currentGeminiIndex = 0;
+
+// Gemini 클라이언트 가져오기 (로테이션)
+function getGeminiClient(): GoogleGenerativeAI | null {
+  if (geminiClients.length === 0) return null;
+  
+  const client = geminiClients[currentGeminiIndex];
+  currentGeminiIndex = (currentGeminiIndex + 1) % geminiClients.length;
+  
+  return client;
+}
 
 export interface NewsArticle {
   title: string;
@@ -50,119 +69,108 @@ export interface GenerationResult {
   };
   metadata: {
     enginesUsed: string[];
-    generatedAt: string;
     processingTime: number;
   };
 }
 
 /**
- * 고품질 프롬프트 - Morning Brew 스타일
+ * 프롬프트 템플릿
  */
 const PROMPTS = {
   mainGeneration: (interest: string, articles: NewsArticle[]) => `
-당신은 Morning Brew 스타일의 전문 뉴스 에디터입니다.
+당신은 Morning Brew 스타일 뉴스레터 전문가입니다.
 
-📌 미션: ${interest} 분야의 뉴스를 5분 안에 읽을 수 있는 매력적인 뉴스레터로 만들기
+관심사: ${interest}
 
-📰 주어진 뉴스 (최신순):
-${articles.slice(0, 8).map((a, i) => `
-${i + 1}. ${a.title}
-   출처: ${a.source}
-   내용: ${a.description}
-   링크: ${a.link}
-`).join('\n')}
+수집된 뉴스:
+${articles.map((a, i) => `${i + 1}. ${a.title}\n   ${a.description}\n   ${a.link}`).join('\n\n')}
 
-✍️ 작성 규칙 (엄수):
-1. 톤앤매너
-   - 친근하고 대화하듯이 작성 (존댓말 사용)
-   - 딱딱하지 않고 쉽게 읽히도록
-   - 예시: "주목할 만한 소식이에요" ✅ / "주목할 만하다" ❌
+🎯 무조건 지켜야 할 품질 규칙:
 
-2. 구조
-   - 제목: 한 줄로 핵심 전달 (20자 이내)
-   - 요약: 2-3문장으로 핵심만 (각 문장 20단어 이내)
-   - 이모지: 각 뉴스에 어울리는 이모지 1개
+1️⃣ 번역체 제거 (CRITICAL)
+   ❌ "에 대해", "에 있어", "에 관해", "을 통해"
+   ✅ "을", "에서", "이", "로"
 
-3. 번역체 절대 금지
-   ❌ "~에 대해", "~에 있어", "~에 관해", "~함에 있어"
-   ✅ "~을", "~에서", "~에 대한", "~할 때"
+2️⃣ 제목 규칙
+   - 20자 이내 (필수!)
+   - 카테고리 제외한 순수 제목만
+   - 이모지 1개만
 
-4. 품질
-   - 사실 왜곡 금지
-   - 과장 금지
-   - 출처와 일치하는 내용만
+3️⃣ 요약 규칙
+   - 2-3문장 (필수!)
+   - 한 문장 20단어 이내
+   - 친근하고 대화하듯이
 
-📊 출력 형식 (JSON만):
+4️⃣ 톤앤매너
+   - 존댓말 사용
+   - 불필요한 수식어 금지
+
+📝 출력 형식 (JSON):
 {
   "mainNews": [
     {
       "emoji": "🚀",
-      "title": "한 줄 제목",
+      "title": "20자 이내 제목",
       "summary": "첫 문장. 두 번째 문장. 세 번째 문장.",
-      "category": "기술",
-      "readTime": "1분",
+      "category": "${interest}",
+      "readTime": "3분",
       "sourceLink": "원문 URL"
     }
   ],
   "quickNews": [
     {
-      "text": "한 줄 뉴스",
+      "text": "15자 이내 핫한 소식",
       "link": "URL"
     }
   ]
 }
 
-⚠️ 중요: 
-- 반드시 유효한 JSON만 출력
-- 마크다운 코드블록 사용 금지
-- 설명 텍스트 포함 금지
-- mainNews는 최소 3개, 최대 5개
-- quickNews는 최소 3개, 최대 5개
+⚠️ 중요:
+- mainNews: 3-5개
+- quickNews: 3-5개
+- 모든 URL은 위 뉴스에서 가져오기
+- 제목 20자 초과 절대 금지!
 `,
 
-  koreanImprovement: (content: string) => `
-당신은 한국어 네이티브 에디터입니다.
+  koreanImprovement: (draftJson: string) => `
+당신은 한국어 품질 개선 전문가입니다.
 
-📝 초안:
-${content}
+초안:
+${draftJson}
 
-🎯 개선 목표:
-1. 번역체 완전 제거
-2. 자연스러운 한국어로 변환
-3. 가독성 극대화
+🎯 개선 규칙:
 
-📋 체크리스트:
-✅ 번역체 패턴 제거
-   - "~에 대해" → "~을"
-   - "~에 있어" → "~에서"
-   - "~에 관해" → "~에 대한"
-   - "~함에 있어" → "~할 때"
+1️⃣ 번역체 완벽 제거
+   ❌ "에 대해", "에 있어", "에 관해"
+   ✅ "을", "에서", "이", "가"
 
-✅ 문장 다듬기
-   - 한 문장 20단어 이내
-   - 복잡한 문장 → 두 문장으로 분리
-   - 어색한 표현 → 자연스러운 표현
+2️⃣ 제목 검증
+   - 20자 초과 시 자르기
+   - 이모지 1개만 유지
 
-✅ 일관성
-   - 존댓말 일관성 유지
-   - 톤앤매너 유지
+3️⃣ 요약 검증
+   - 2-3문장 엄수
+   - 복잡한 문장 → 2문장으로 분리
 
-⚠️ JSON 구조는 절대 변경 금지
-- emoji, title, summary, category, readTime, sourceLink 필드 유지
-- 배열 순서 유지
+4️⃣ 자연스러운 한국어
+   - 친근하게 대화하듯이
+   - 존댓말 사용
+
+📝 출력 형식 (JSON):
+동일한 구조로 개선된 버전 반환
 `,
 
-  factCheck: (content: string, sources: NewsArticle[]) => `
-당신은 뉴스 팩트체커입니다.
+  factCheck: (contentJson: string, sources: NewsArticle[]) => `
+당신은 팩트 체커입니다.
 
-📰 생성된 뉴스레터:
-${content}
+생성된 콘텐츠:
+${contentJson}
 
 📚 원본 출처:
 ${sources.map((s, i) => `${i + 1}. ${s.title}\n   ${s.description}\n   ${s.link}`).join('\n\n')}
 
 🔍 검증 항목:
-1. 사실 왜곡 여부
+1. 사실 왜곱 여부
 2. 과장된 표현
 3. 출처 불일치
 4. 오해의 소지
@@ -211,7 +219,7 @@ export class NewsletterGenerator {
       messages: [
         {
           role: 'system',
-          content: 'You are a professional newsletter editor. Always output valid JSON only.'
+          content: 'You are a newsletter writer. Output valid JSON only.'
         },
         {
           role: 'user',
@@ -220,41 +228,67 @@ export class NewsletterGenerator {
       ],
       model: 'llama-3.1-8b-instant',
       temperature: 0.7,
-      max_tokens: 2500,
+      max_tokens: 2000,
       response_format: { type: 'json_object' }
     });
 
-    const content = completion.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    const text = completion.choices[0]?.message?.content || '{}';
+    return JSON.parse(text);
   }
 
   /**
-   * Step 2: Gemini로 한국어 품질 개선
+   * Step 2: Gemini로 한국어 품질 개선 (API 키 로테이션 지원)
    */
   private async improveWithGemini(
     draft: NewsletterContent
   ): Promise<NewsletterContent> {
-    if (!gemini) {
+    if (geminiClients.length === 0) {
       console.log('⚠️ Gemini API 키 없음, 개선 단계 스킵');
       return draft;
     }
 
     console.log('✨ [Step 2] Gemini로 한국어 개선 중...');
 
-    const model = gemini.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp'
-    });
+    // 모든 API 키 시도 (로테이션)
+    for (let attempt = 0; attempt < geminiClients.length; attempt++) {
+      try {
+        const gemini = getGeminiClient();
+        if (!gemini) break;
 
-    const prompt = PROMPTS.koreanImprovement(JSON.stringify(draft, null, 2));
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+        const model = gemini.getGenerativeModel({
+          model: 'gemini-2.0-flash-exp'
+        });
 
-    // JSON 추출
-    const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
-                      text.match(/\{[\s\S]*\}/);
-    const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const prompt = PROMPTS.koreanImprovement(JSON.stringify(draft, null, 2));
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
 
-    return JSON.parse(cleanJson.trim());
+        // JSON 추출
+        const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
+                          text.match(/\{[\s\S]*\}/);
+        const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+
+        console.log(`✅ Gemini API 키 #${attempt + 1} 성공`);
+        return JSON.parse(cleanJson.trim());
+
+      } catch (error: any) {
+        const is429 = error?.message?.includes('429') || error?.message?.includes('quota');
+        
+        if (is429 && attempt < geminiClients.length - 1) {
+          console.log(`⚠️ Gemini API 키 #${attempt + 1} 할당량 초과, 다음 키로 재시도...`);
+          continue; // 다음 키로 재시도
+        }
+        
+        // 마지막 키도 실패하거나 429가 아닌 에러
+        console.error('❌ Gemini 개선 실패:', error?.message || error);
+        console.log('⚠️ 초안 그대로 사용');
+        return draft;
+      }
+    }
+
+    // 모든 키 실패 시
+    console.log('⚠️ 모든 Gemini API 키 할당량 초과, 초안 그대로 사용');
+    return draft;
   }
 
   /**
@@ -296,43 +330,67 @@ export class NewsletterGenerator {
   }
 
   /**
-   * Fallback: Gemini 단독 사용
+   * Fallback: Gemini 단독 사용 (API 키 로테이션 지원)
    */
   private async fallbackGenerate(
     interest: string,
     articles: NewsArticle[]
   ): Promise<GenerationResult> {
-    if (!gemini) {
+    if (geminiClients.length === 0) {
       throw new Error('사용 가능한 AI 엔진이 없습니다');
     }
 
     console.log('🔄 [Fallback] Gemini 단독 모드');
 
-    const model = gemini.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp'
-    });
+    // 모든 API 키 시도 (로테이션)
+    for (let attempt = 0; attempt < geminiClients.length; attempt++) {
+      try {
+        const gemini = getGeminiClient();
+        if (!gemini) break;
 
-    const prompt = PROMPTS.mainGeneration(interest, articles);
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+        const model = gemini.getGenerativeModel({
+          model: 'gemini-2.0-flash-exp'
+        });
 
-    const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
-                      text.match(/\{[\s\S]*\}/);
-    const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const prompt = PROMPTS.mainGeneration(interest, articles);
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
 
-    return {
-      newsletter: JSON.parse(cleanJson.trim()),
-      validation: {
-        trustScore: 70,
-        verified: false,
-        issues: []
-      },
-      metadata: {
-        enginesUsed: ['Gemini 2.0 Flash (Fallback)'],
-        generatedAt: new Date().toISOString(),
-        processingTime: Date.now() - this.startTime
+        const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
+                          text.match(/\{[\s\S]*\}/);
+        const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+
+        console.log(`✅ Gemini API 키 #${attempt + 1} 성공 (Fallback)`);
+        
+        return {
+          newsletter: JSON.parse(cleanJson.trim()),
+          validation: {
+            trustScore: 75,
+            verified: false,
+            issues: []
+          },
+          metadata: {
+            enginesUsed: [`Gemini 2.0 Flash (키 #${attempt + 1})`],
+            processingTime: Date.now() - this.startTime
+          }
+        };
+
+      } catch (error: any) {
+        const is429 = error?.message?.includes('429') || error?.message?.includes('quota');
+        
+        if (is429 && attempt < geminiClients.length - 1) {
+          console.log(`⚠️ Gemini API 키 #${attempt + 1} 할당량 초과 (Fallback), 다음 키로 재시도...`);
+          continue;
+        }
+        
+        // 마지막 키도 실패
+        if (attempt === geminiClients.length - 1) {
+          throw new Error(`모든 Gemini API 키 할당량 초과: ${error?.message || error}`);
+        }
       }
-    };
+    }
+
+    throw new Error('Gemini Fallback 실패');
   }
 
   /**
@@ -345,7 +403,7 @@ export class NewsletterGenerator {
     this.startTime = Date.now();
 
     try {
-      // Step 1: Groq로 초안
+      // Step 1: Groq로 초안 생성
       const draft = await this.generateWithGroq(interest, articles);
       console.log('✅ 초안 완성');
 
@@ -357,18 +415,6 @@ export class NewsletterGenerator {
       const validation = await this.factCheckWithGroq(improved, articles);
       console.log('✅ 팩트 체크 완성');
 
-      // 신뢰도가 낮으면 경고 추가
-      if (validation.trustScore < 70) {
-        // 경고 메시지를 첫 번째 뉴스에 추가
-        if (improved.mainNews.length > 0) {
-          improved.mainNews[0].summary = 
-            '⚠️ 자동 생성 콘텐츠입니다. 원문을 확인해주세요.\n\n' + 
-            improved.mainNews[0].summary;
-        }
-      }
-
-      const processingTime = Date.now() - this.startTime;
-
       return {
         newsletter: improved,
         validation,
@@ -378,26 +424,25 @@ export class NewsletterGenerator {
             'Gemini 2.0 Flash',
             'Groq Llama 3.3 70B'
           ],
-          generatedAt: new Date().toISOString(),
-          processingTime
+          processingTime: Date.now() - this.startTime
         }
       };
 
     } catch (error) {
-      console.error('❌ 멀티엔진 생성 실패:', error);
-      console.log('🔄 Fallback 모드로 전환');
-
-      return await this.fallbackGenerate(interest, articles);
+      console.error('❌ 멀티엔진 실패, Fallback으로 전환:', error);
+      return this.fallbackGenerate(interest, articles);
     }
   }
 }
 
-// 싱글톤 인스턴스
-let generatorInstance: NewsletterGenerator | null = null;
+/**
+ * 싱글턴 인스턴스
+ */
+let generator: NewsletterGenerator | null = null;
 
 export function getNewsletterGenerator(): NewsletterGenerator {
-  if (!generatorInstance) {
-    generatorInstance = new NewsletterGenerator();
+  if (!generator) {
+    generator = new NewsletterGenerator();
   }
-  return generatorInstance;
+  return generator;
 }
