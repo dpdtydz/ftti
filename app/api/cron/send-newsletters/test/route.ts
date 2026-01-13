@@ -22,19 +22,40 @@ function getSupabaseClient() {
 
 export async function GET(request: Request) {
   try {
+    // 쿼리 파라미터에서 time 추출
+    const { searchParams } = new URL(request.url);
+    const timeParam = searchParams.get('time');
+    
+    // 현재 한국 시간 계산
+    const now = new Date();
+    const kstTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const currentHour = String(kstTime.getHours()).padStart(2, '0');
+    const currentMinute = String(kstTime.getMinutes()).padStart(2, '0');
+    const currentTime = `${currentHour}:${currentMinute}:00`;
+    
+    // 필터링할 시간 결정 (파라미터 우선, 없으면 현재 시간)
+    const targetTime = timeParam ? `${timeParam}:00` : currentTime;
+    
     console.log('🧪 테스트 모드: 뉴스레터 발송 시작');
-    console.log('⏰ 시간:', new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }));
+    console.log('⏰ 현재 시간(KST):', kstTime.toLocaleString('ko-KR'));
+    console.log('🎯 필터링 시간:', targetTime);
+    if (timeParam) {
+      console.log('📝 파라미터로 지정된 시간 사용');
+    } else {
+      console.log('📝 현재 시간 기준 자동 필터링');
+    }
 
     // Supabase 클라이언트 초기화
     const supabase = getSupabaseClient();
 
-    // 1. 활성 사용자 조회 (테스트: 최대 3명만)
+    // 1. 활성 사용자 조회 + send_time 필터링 (테스트: 최대 3명만)
     const { data: users, error: usersError } = await supabase
       .from('user_profiles')
       .select(`
         id,
         email,
         nickname,
+        send_time,
         user_interests (
           interests (
             name
@@ -42,6 +63,7 @@ export async function GET(request: Request) {
         )
       `)
       .eq('is_active', true)
+      .eq('send_time', targetTime)  // ⭐ send_time 필터링 추가
       .limit(3); // 테스트 모드: 최대 3명
 
     if (usersError) {
@@ -55,14 +77,15 @@ export async function GET(request: Request) {
       return interests.length > 0;
     });
 
-    console.log(`📊 테스트 발송 대상: ${activeUsers.length}명 (최대 3명)`);
+    console.log(`📊 테스트 발송 대상: ${activeUsers.length}명 (최대 3명, send_time=${targetTime})`);
 
     if (activeUsers.length === 0) {
       return NextResponse.json({
         success: true,
-        message: '발송할 사용자가 없습니다',
+        message: `send_time이 ${targetTime}인 발송 대상 사용자가 없습니다`,
         sent: 0,
-        mode: 'test'
+        mode: 'test',
+        targetTime
       });
     }
 
@@ -80,6 +103,7 @@ export async function GET(request: Request) {
         const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
 
         console.log(`\n📧 처리 중: ${user.email} (${interests.join(', ')})`);
+        console.log(`   ⏰ send_time: ${user.send_time}`);
 
         // 2-1. 각 관심사별로 뉴스 수집 (섹션별)
         const sections = [];
@@ -180,7 +204,8 @@ export async function GET(request: Request) {
       ...results,
       total: activeUsers.length,
       mode: 'test',
-      message: '✅ 테스트 발송 완료! 최대 3명에게만 발송되었습니다.'
+      targetTime,
+      message: `✅ 테스트 발송 완료! send_time=${targetTime} 사용자에게 발송되었습니다.`
     });
 
   } catch (error) {
