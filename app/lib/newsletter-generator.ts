@@ -2,8 +2,6 @@
 import Groq from 'groq-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// API 클라이언트는 함수 내부에서 초기화됩니다 (런타임에)
-
 export interface NewsArticle {
   title: string;
   description: string;
@@ -46,11 +44,7 @@ export interface GenerationResult {
   };
 }
 
-/**
- * JSON 정리 함수 - HTML 엔티티 및 잘못된 문자 처리
- */
 function cleanJsonString(jsonStr: string): string {
-  // HTML 엔티티 디코딩
   let cleaned = jsonStr
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
@@ -58,15 +52,11 @@ function cleanJsonString(jsonStr: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
   
-  // 잘못된 이스케이프 수정
   cleaned = cleaned.replace(/\\\\/g, '\\');
   
   return cleaned;
 }
 
-/**
- * 고품질 프롬프트 - Morning Brew 스타일
- */
 const PROMPTS = {
   mainGeneration: (interest: string, articles: NewsArticle[]) => `
 당신은 Morning Brew 스타일의 전문 뉴스 에디터입니다.
@@ -81,67 +71,81 @@ ${i + 1}. ${a.title}
    링크: ${a.link}
 `).join('\n')}
 
-✍️ 작성 규칙 (엄수):
-1. 톤앤매너
-   - 친근하고 대화하듯이 작성 (존댑말 사용)
-   - 딱딱하지 않고 쉽게 읽히도록
-   - 예시: "주목할 만한 소식이에요" ✅ / "주목할 만하다" ❌
+⚠️ CRITICAL JSON RULES (반드시 준수):
 
-2. 구조
-   - 제목: 한 줄로 핵심 전달 (20자 이내)
-   - 요약: 2-3문장으로 핵심만 (각 문장 20단어 이내)
-   - 이모지: 각 뉴스에 어울리는 이모지 1개 (필수!)
+1. 🎯 EMOJI 필드 규칙 (매우 중요!)
+   ❌ 절대 금지: ":)", ":D", "^^", ";)" 같은 텍스트 이모티콘
+   ✅ 반드시 사용: 🚀 💡 📊 🎯 🔥 💼 📱 🌟 ⚡ 🏆 같은 유니코드 이모지
+   
+   올바른 예시:
+   "emoji": "🚀"  ✅
+   "emoji": "💡"  ✅
+   "emoji": "📊"  ✅
+   
+   잘못된 예시:
+   "emoji": ":)"  ❌
+   "emoji": ""    ❌
+   "emoji": "smile" ❌
 
-3. 번역체 절대 금지
-   ❌ "~에 대해", "~에 있어", "~에 관해", "~함에 있어"
-   ✅ "~을", "~에서", "~에 대한", "~할 때"
+2. 🔧 JSON 포맷 규칙
+   - 문자열 끝에 \\n 금지
+   - 모든 필드는 쌍따옴표(")로 감싸기
+   - 마지막 속성 뒤에 쉼표(,) 금지
+   
+   올바른 예시:
+   "title": "한 줄 제목"  ✅
+   
+   잘못된 예시:
+   "title": "한 줄 제목",\\n  ❌
+   "title": "한 줄 제목",     ❌ (마지막에 쉼표)
 
-4. 품질
-   - 사실 왜곱 금지
-   - 과장 금지
-   - 출처와 일치하는 내용만
+3. ✍️ 작성 규칙
+   - 제목: 20자 이내
+   - 요약: 2-3문장 (각 문장 20단어 이내)
+   - 번역체 금지 ("~에 대해" → "~을")
+   - 친근한 존댑말 사용
 
-5. 🔥 출처 유지 (필수!)
-   - 각 뉴스의 원본 출처(source)를 반드시 그대로 유지
-   - 예: "토스", "카카오", "GeekNews", "ZDNet Korea" 등
-   - 출처를 절대 변경하거나 "네이버"로 바꾸지 말 것!
+4. 🔥 출처 유지 (필수!)
+   - source 필드는 원본 그대로 유지
+   - "토스", "카카오", "네이버 뉴스" 등 변경 금지
 
-6. 🚨 JSON 검증 (매우 중요!)
-   - 반드시 유효한 JSON만 출력
-   - 모든 문자열은 큰따옴표(")로 감싸기
-   - 특수문자는 이스케이프 처리 (\", \\n 등)
-   - emoji 필드는 절대 빈 문자열 금지 (반드시 이모지 입력!)
-   - title 뒤에는 반드시 콜론(:) 필요
+📊 출력 형식 (정확히 이 형식으로!):
 
-📊 출력 형식 (JSON만):
 {
   "mainNews": [
     {
       "emoji": "🚀",
-      "title": "한 줄 제목",
-      "summary": "첫 문장. 두 번째 문장. 세 번째 문장.",
+      "title": "AI 기술 발전",
+      "summary": "최신 AI 기술이 발표됐어요. 성능이 크게 개선됐습니다.",
       "category": "기술",
       "readTime": "1분",
       "source": "토스",
-      "sourceLink": "원문 URL"
+      "sourceLink": "https://example.com"
+    },
+    {
+      "emoji": "💡",
+      "title": "스타트업 투자 유치",
+      "summary": "국내 스타트업이 투자를 받았어요. 글로벌 진출을 준비합니다.",
+      "category": "경제",
+      "readTime": "2분",
+      "source": "카카오",
+      "sourceLink": "https://example.com"
     }
   ],
   "quickNews": [
     {
-      "text": "한 줄 뉴스",
-      "link": "URL"
+      "text": "간단한 한 줄 뉴스",
+      "link": "https://example.com"
     }
   ]
 }
 
-⚠️ 중요: 
-- 반드시 유효한 JSON만 출력
-- 마크다운 코드블록 사용 금지
-- 설명 텍스트 포함 금지
-- mainNews는 최소 3개, 최대 5개
-- quickNews는 최소 3개, 최대 5개
-- 각 뉴스의 source 필드는 원본 그대로 유지!
-- emoji는 절대 빈 문자열 금지! (🚀, 💡, 📊, 🎯, 🔥 등 사용)
+⚠️ 최종 체크:
+- mainNews: 3-5개
+- quickNews: 3-5개
+- 모든 emoji는 실제 유니코드 이모지 (🚀, 💡, 📊 등)
+- 문자열 끝에 \\n 없음
+- 유효한 JSON만 출력
 `,
 
   koreanImprovement: (content: string) => `
@@ -167,15 +171,11 @@ ${content}
    - 복잡한 문장 → 두 문장으로 분리
    - 어색한 표현 → 자연스러운 표현
 
-✅ 일관성
-   - 존댑말 일관성 유지
-   - 톤앤매너 유지
-
 ⚠️ JSON 구조는 절대 변경 금지
 - emoji, title, summary, category, readTime, source, sourceLink 필드 유지
 - 배열 순서 유지
-- 🔥 source 필드는 절대 변경하지 말 것! (원본 그대로 유지)
-- emoji가 빈 문자열이면 적절한 이모지 추가 (🚀, 💡, 📊, 🎯, 🔥 등)
+- source 필드는 절대 변경하지 말 것!
+- emoji가 텍스트 이모티콘(":)")이면 유니코드 이모지(🚀)로 교체
 `,
 
   factCheck: (content: string, sources: NewsArticle[]) => `
@@ -214,9 +214,6 @@ ${sources.map((s, i) => `${i + 1}. ${s.title}\n   ${s.description}\n   ${s.link}
 `
 };
 
-/**
- * 멀티엔진 뉴스레터 생성기
- */
 export class NewsletterGenerator {
   private startTime: number = 0;
   private groq: Groq | null = null;
@@ -224,12 +221,10 @@ export class NewsletterGenerator {
   private currentGeminiIndex = 0;
 
   constructor() {
-    // 런타임에 환경변수 읽기
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GEMINI_API_KEYS_RAW = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '';
     const GEMINI_API_KEYS = GEMINI_API_KEYS_RAW.split(',').map(k => k.trim()).filter(Boolean);
 
-    // 클라이언트 초기화
     this.groq = GROQ_API_KEY ? new Groq({ apiKey: GROQ_API_KEY }) : null;
     this.geminiClients = GEMINI_API_KEYS.map(key => new GoogleGenerativeAI(key));
 
@@ -237,7 +232,6 @@ export class NewsletterGenerator {
     console.log(`🔑 Gemini API 키: ${this.geminiClients.length}개 로드됨`);
   }
 
-  // Gemini 클라이언트 가져오기 (로테이션)
   private getGeminiClient(): GoogleGenerativeAI | null {
     if (this.geminiClients.length === 0) return null;
     
@@ -247,9 +241,6 @@ export class NewsletterGenerator {
     return client;
   }
 
-  /**
-   * Step 1: Groq로 빠르게 초안 생성
-   */
   private async generateWithGroq(
     interest: string,
     articles: NewsArticle[]
@@ -264,7 +255,12 @@ export class NewsletterGenerator {
       messages: [
         {
           role: 'system',
-          content: 'You are a professional newsletter editor. Always output valid JSON only. Never use HTML entities like &quot; - use proper JSON escape sequences instead.'
+          content: `You are a professional newsletter editor. CRITICAL RULES:
+1. NEVER use text emoticons like :) :D ^^ ;) in the "emoji" field
+2. ALWAYS use real Unicode emojis like 🚀 💡 📊 🎯 🔥 in the "emoji" field
+3. NEVER add \\n at the end of string values
+4. Output ONLY valid JSON - no markdown, no code blocks, no explanations
+5. Never use HTML entities like &quot; - use proper escape sequences`
         },
         {
           role: 'user',
@@ -288,9 +284,6 @@ export class NewsletterGenerator {
     }
   }
 
-  /**
-   * Step 2: Gemini로 한국어 품질 개선 (API 키 로테이션 지원)
-   */
   private async improveWithGemini(
     draft: NewsletterContent
   ): Promise<NewsletterContent> {
@@ -301,7 +294,6 @@ export class NewsletterGenerator {
 
     console.log('✨ [Step 2] Gemini로 한국어 개선 중...');
 
-    // 모든 API 키 시도 (로테이션)
     for (let attempt = 0; attempt < this.geminiClients.length; attempt++) {
       try {
         const gemini = this.getGeminiClient();
@@ -315,7 +307,6 @@ export class NewsletterGenerator {
         const result = await model.generateContent(prompt);
         const text = result.response.text();
 
-        // JSON 추출
         const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
                           text.match(/\{[\s\S]*\}/);
         const rawJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
@@ -342,9 +333,6 @@ export class NewsletterGenerator {
     return draft;
   }
 
-  /**
-   * Step 3: Groq로 팩트 체크
-   */
   private async factCheckWithGroq(
     content: NewsletterContent,
     sources: NewsArticle[]
@@ -389,9 +377,6 @@ export class NewsletterGenerator {
     }
   }
 
-  /**
-   * Fallback: Gemini 단독 사용 (API 키 로테이션 지원)
-   */
   private async fallbackGenerate(
     interest: string,
     articles: NewsArticle[]
@@ -402,7 +387,6 @@ export class NewsletterGenerator {
 
     console.log('🔄 [Fallback] Gemini 단독 모드');
 
-    // 모든 API 키 시도 (로테이션)
     for (let attempt = 0; attempt < this.geminiClients.length; attempt++) {
       try {
         const gemini = this.getGeminiClient();
@@ -453,9 +437,6 @@ export class NewsletterGenerator {
     throw new Error('Gemini Fallback 실패');
   }
 
-  /**
-   * 메인 생성 함수
-   */
   async generate(
     interest: string,
     articles: NewsArticle[]
@@ -465,19 +446,15 @@ export class NewsletterGenerator {
     console.log(`🔑 Gemini API 키: ${this.geminiClients.length}개 사용 가능`);
 
     try {
-      // Step 1: Groq로 초안 생성
       const draft = await this.generateWithGroq(interest, articles);
       console.log('✅ 초안 완성');
 
-      // Step 2: Gemini로 한국어 개선
       const improved = await this.improveWithGemini(draft);
       console.log('✅ 한국어 개선 완성');
 
-      // Step 3: Groq로 팩트 체크
       const validation = await this.factCheckWithGroq(improved, articles);
       console.log('✅ 팩트 체크 완성');
 
-      // 신뢰도가 낮으면 경고 추가
       if (validation.trustScore < 70) {
         if (improved.mainNews.length > 0) {
           improved.mainNews[0].summary = 
@@ -511,7 +488,6 @@ export class NewsletterGenerator {
   }
 }
 
-// 싱글턴 인스턴스
 let generatorInstance: NewsletterGenerator | null = null;
 
 export function getNewsletterGenerator(): NewsletterGenerator {
