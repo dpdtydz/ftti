@@ -45,6 +45,11 @@ export interface GenerationResult {
 }
 
 /**
+ * 강화된 JSON 정리 함수
+ * - HTML 엔티티 디코딩
+ * - 잘못된 이스케이프 시퀀스 제거
+ * - 문자열 끝의 \\n 패턴 제거
+ * - JSON 내부의 쌍따옴표 문제 자동 수정
  * JSON Schema for structured output
  * Groq API의 구조화된 출력을 위한 JSON Schema
  */
