@@ -9,6 +9,18 @@ import { enhanceNewsletterEmail, SAMPLE_QUIZZES, SAMPLE_POLLS } from '@/app/lib/
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// HTML 엔티티 디코딩 함수
+function decodeHTMLEntities(text: string): string {
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ');
+}
+
 // Supabase 클라이언트 생성 함수
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -99,7 +111,6 @@ export async function GET(request: Request) {
           if (isITRelated) {
             console.log('  🔍 IT 전문 RSS 대량 수집 시작...');
             
-            // IT 전문 소스들을 병렬로 대량 수집 (최대한 많이!)
             const [naverArticles, geekArticles, kakaoArticles, tossArticles, zdnetArticles, bloterArticles, githubArticle] = await Promise.allSettled([
               fetchNaverNews(interest),
               fetchGeekNews(),
@@ -118,23 +129,21 @@ export async function GET(request: Request) {
               results[6].status === 'fulfilled' ? results[6].value : null
             ]);
             
-            // 모든 뉴스를 합쳐서 AI한테 선택하게 함 (최대 30개)
             articles = [
-              ...naverArticles,      // 10개
-              ...geekArticles,       // 10개
-              ...kakaoArticles,      // 5개
-              ...tossArticles,       // 5개
-              ...zdnetArticles,      // 5개
-              ...bloterArticles,     // 5개
-              ...(githubArticle ? [githubArticle] : [])  // 1개
-            ].slice(0, 30);  // 최대 30개 후보를 AI한테 전달
+              ...naverArticles,
+              ...geekArticles,
+              ...kakaoArticles,
+              ...tossArticles,
+              ...zdnetArticles,
+              ...bloterArticles,
+              ...(githubArticle ? [githubArticle] : [])
+            ].slice(0, 30);
             
             console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 카카오 ${kakaoArticles.length}개 | 토스 ${tossArticles.length}개 | ZDNet ${zdnetArticles.length}개 | 블로터 ${bloterArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
             console.log(`  ✅ AI 선별 대상: ${articles.length}개 뉴스 → AI가 퀄리티 높은 4-5개 선택`);
           } else {
             console.log('  🔍 네이버 뉴스 검색 중...');
             const naverArticles = await fetchNaverNews(interest);
-            // 일반 관심사도 10개 수집해서 AI가 선택
             articles = naverArticles.slice(0, 10);
             console.log(`  ✅ AI 선별 대상: ${articles.length}개 뉴스 → AI가 퀄리티 높은 3-4개 선택`);
           }
@@ -144,7 +153,6 @@ export async function GET(request: Request) {
             continue;
           }
 
-          // AI가 30개 중에서 가장 좋은 뉴스만 선별
           const result = await generator.generate(interest, articles);
 
           sections.push({
@@ -270,25 +278,22 @@ async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 
     while ((match = itemRegex.exec(xmlText)) !== null && items.length < maxItems) {
       const itemXml = match[1];
       
-      // 제목 추출
       let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
                 || itemXml.match(/<title>(.*?)<\/title>/)?.[1] 
                 || '';
       
-      // 링크 추출
       let link = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/)?.[1]
               || itemXml.match(/<link>(.*?)<\/link>/)?.[1] 
               || '';
       
-      // 설명 추출
       let description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
                      || itemXml.match(/<description>(.*?)<\/description>/)?.[1]
                      || '';
       
-      // HTML 태그 제거
-      title = title.replace(/<[^>]*>/g, '').trim();
+      // HTML 태그 및 엔티티 제거
+      title = decodeHTMLEntities(title.replace(/<[^>]*>/g, '')).trim();
       link = link.trim();
-      const cleanDescription = description.replace(/<[^>]*>/g, '').trim().substring(0, 200);
+      const cleanDescription = decodeHTMLEntities(description.replace(/<[^>]*>/g, '')).trim().substring(0, 200);
 
       if (title && link) {
         items.push({
@@ -312,27 +317,22 @@ async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 
   }
 }
 
-// 🔥 GeekNews 공식 RSS
 async function fetchGeekNews(): Promise<NewsArticle[]> {
   return parseRSSFeed('https://news.hada.io/rss', 'GeekNews', 10);
 }
 
-// 🍊 카카오 기술블로그
 async function fetchKakaoTech(): Promise<NewsArticle[]> {
   return parseRSSFeed('https://tech.kakao.com/feed/', '카카오', 5);
 }
 
-// 💳 토스 테크 블로그
 async function fetchTossTech(): Promise<NewsArticle[]> {
   return parseRSSFeed('https://toss.tech/rss.xml', '토스', 5);
 }
 
-// 📰 ZDNet Korea
 async function fetchZDNet(): Promise<NewsArticle[]> {
   return parseRSSFeed('https://zdnet.co.kr/rss/news.xml', 'ZDNet Korea', 5);
 }
 
-// 🖥️ 블로터
 async function fetchBloter(): Promise<NewsArticle[]> {
   return parseRSSFeed('https://www.bloter.net/feed/', '블로터', 5);
 }
@@ -342,7 +342,6 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    // GitHub Trending API
     const response = await fetch('https://api.gitterapp.com/repositories', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -361,7 +360,6 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     const repos = await response.json();
     if (!Array.isArray(repos) || repos.length === 0) return null;
 
-    // 최근 인기 프로젝트
     const topRepo = repos[0];
     if (!topRepo) return null;
 
@@ -399,8 +397,8 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
     const items = data.items || [];
 
     return items.map((item: any) => ({
-      title: item.title.replace(/<[^>]*>/g, ''),
-      description: item.description.replace(/<[^>]*>/g, ''),
+      title: decodeHTMLEntities(item.title.replace(/<[^>]*>/g, '')),
+      description: decodeHTMLEntities(item.description.replace(/<[^>]*>/g, '')),
       link: item.link,
       source: '네이버 뉴스',
       pubDate: item.pubDate
