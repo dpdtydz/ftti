@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getNewsletterGenerator } from '@/app/lib/newsletter-generator';
 import type { NewsArticle } from '@/app/lib/newsletter-generator';
+import { enhanceNewsletterEmail, SAMPLE_QUIZZES, SAMPLE_POLLS } from '@/app/lib/email-enhancements';
 
 // Next.js 설정
 export const runtime = 'nodejs';
@@ -101,7 +102,6 @@ export async function GET(request: Request) {
           const isITRelated = isITKeyword(interest);
 
           if (isITRelated) {
-            // IT: GeekNews 1개 + 네이버 2개 + GitHub Trending 1개
             console.log('  🔍 IT 전문 뉴스 수집 시작...');
             
             const [geekArticles, naverArticles, githubArticle] = await Promise.all([
@@ -119,7 +119,6 @@ export async function GET(request: Request) {
             console.log(`  📊 수집 결과: GeekNews ${geekArticles.length}개 | 네이버 ${naverArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
             console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
           } else {
-            // 일반: 네이버 3개
             console.log('  🔍 네이버 뉴스 검색 중...');
             const naverArticles = await fetchNaverNews(interest);
             articles = naverArticles.slice(0, 3);
@@ -148,27 +147,43 @@ export async function GET(request: Request) {
           continue;
         }
 
-        await sendEmail({
-          to: user.email,
-          userName: user.nickname || user.email.split('@')[0],
-          sections,
-          userId: user.id
-        });
-
-        try {
-          await supabase.from('newsletter_sends').insert({
+        // 1. DB에 newsletter_send 레코드 먼저 생성 (sendId 필요)
+        const { data: newsletterSend, error: insertError } = await supabase
+          .from('newsletter_sends')
+          .insert({
             user_id: user.id,
             subject: getSubjectLine(sections),
             content: { sections },
             trust_score: Math.round(sections.reduce((sum, s) => sum + s.trustScore, 0) / sections.length),
             engines_used: ['Groq Llama 3.1 8B', 'Gemini 2.0 Flash', 'Groq Llama 3.3 70B'],
             processing_time: 0,
-            sent_at: new Date().toISOString(),
-            status: 'sent'
-          });
-        } catch (error) {
-          console.warn('⚠️ 발송 기록 저장 실패:', error);
+            status: 'pending'
+          })
+          .select()
+          .single();
+
+        if (insertError || !newsletterSend) {
+          console.warn('⚠️ 발송 기록 생성 실패:', insertError);
+          throw new Error('발송 기록 생성 실패');
         }
+
+        // 2. 이메일 발송 (트래킹 + 인터랙티브 포함)
+        await sendEmailWithTracking({
+          to: user.email,
+          userName: user.nickname || user.email.split('@')[0],
+          sections,
+          userId: user.id,
+          sendId: newsletterSend.id
+        });
+
+        // 3. 발송 상태 업데이트
+        await supabase
+          .from('newsletter_sends')
+          .update({
+            status: 'sent',
+            sent_at: new Date().toISOString()
+          })
+          .eq('id', newsletterSend.id);
 
         results.success++;
         console.log(`✅ 발송 성공: ${user.email}`);
@@ -177,17 +192,6 @@ export async function GET(request: Request) {
       } catch (error) {
         console.error(`❌ 실패: ${user.email}`, error);
         results.failed++;
-
-        try {
-          await supabase.from('newsletter_sends').insert({
-            user_id: user.id,
-            status: 'failed',
-            error_message: error instanceof Error ? error.message : 'Unknown error',
-            sent_at: new Date().toISOString()
-          });
-        } catch (insertError) {
-          console.warn('⚠️ 실패 기록 저장 실패:', insertError);
-        }
       }
     }
 
@@ -223,9 +227,6 @@ function isITKeyword(interest: string): boolean {
   return itKeywords.some(keyword => interest.includes(keyword));
 }
 
-/**
- * GeekNews RSS 크롤링 (상세 로그)
- */
 async function fetchGeekNews(): Promise<NewsArticle[]> {
   const startTime = Date.now();
   
@@ -251,7 +252,6 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
 
     if (!response.ok) {
       console.log(`  ❌ [GeekNews] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
-      console.log(`  📍 [GeekNews] URL: https://news.hada.io/rss`);
       return [];
     }
 
@@ -292,30 +292,14 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
     }
 
     console.log(`  ✅ [GeekNews] 성공: 총 ${totalItems}개 발견, ${items.length}개 파싱 (${elapsed}ms)`);
-    if (items.length > 0) {
-      console.log(`  📰 [GeekNews] 첫 기사: "${items[0].title.substring(0, 40)}..."`);
-    }
-    
     return items;
 
   } catch (error) {
-    const elapsed = Date.now() - startTime;
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        console.log(`  ⏱️ [GeekNews] 타임아웃 (${elapsed}ms)`);
-      } else {
-        console.log(`  ❌ [GeekNews] 에러: ${error.message} (${elapsed}ms)`);
-      }
-    } else {
-      console.log(`  ❌ [GeekNews] 알 수 없는 에러 (${elapsed}ms)`);
-    }
+    console.log(`  ❌ [GeekNews] 에러`);
     return [];
   }
 }
 
-/**
- * GitHub Trending 크롤링 (상세 로그)
- */
 async function fetchGitHubTrending(): Promise<NewsArticle | null> {
   const startTime = Date.now();
   
@@ -323,79 +307,46 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     console.log('  🐙 [GitHub] Trending 크롤링 시작...');
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort();
-      console.log('  ⏱️ [GitHub] 타임아웃 (10초)');
-    }, 10000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch('https://api.gitterapp.com/repositories?language=&since=daily', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0',
         'Accept': 'application/json'
       },
       signal: controller.signal
     });
     
     clearTimeout(timeout);
-    const elapsed = Date.now() - startTime;
 
-    if (!response.ok) {
-      console.log(`  ❌ [GitHub] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
-      console.log(`  📍 [GitHub] URL: https://api.gitterapp.com/repositories`);
-      return null;
-    }
+    if (!response.ok) return null;
 
     const repos = await response.json();
-    console.log(`  📦 [GitHub] 응답 수신: ${Array.isArray(repos) ? repos.length : 0}개 프로젝트 (${elapsed}ms)`);
-    
-    if (!Array.isArray(repos) || repos.length === 0) {
-      console.log(`  ⚠️ [GitHub] 빈 응답`);
-      return null;
-    }
+    if (!Array.isArray(repos) || repos.length === 0) return null;
 
     const sortedRepos = repos
       .filter((r: any) => r.forks > 100)
       .sort((a: any, b: any) => b.forks - a.forks);
 
-    if (sortedRepos.length === 0) {
-      console.log(`  ⚠️ [GitHub] 포크 100+ 프로젝트 없음`);
-      return null;
-    }
+    if (sortedRepos.length === 0) return null;
 
     const topRepo = sortedRepos[0];
-    const oneLiner = `${topRepo.name}: ${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars.toLocaleString()}, 🍴 ${topRepo.forks.toLocaleString()})`;
-
-    console.log(`  ✅ [GitHub] 성공: ${topRepo.name} (⭐ ${topRepo.stars.toLocaleString()}, 🍴 ${topRepo.forks.toLocaleString()}) (${elapsed}ms)`);
+    console.log(`  ✅ [GitHub] 성공: ${topRepo.name}`);
     
     return {
       title: `🔥 ${topRepo.name}`,
-      description: oneLiner,
+      description: `${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars.toLocaleString()})`,
       link: topRepo.url,
       source: 'GitHub Trending',
       pubDate: new Date().toISOString()
     };
 
   } catch (error) {
-    const elapsed = Date.now() - startTime;
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        console.log(`  ⏱️ [GitHub] 타임아웃 (${elapsed}ms)`);
-      } else {
-        console.log(`  ❌ [GitHub] 에러: ${error.message} (${elapsed}ms)`);
-      }
-    } else {
-      console.log(`  ❌ [GitHub] 알 수 없는 에러 (${elapsed}ms)`);
-    }
     return null;
   }
 }
 
-/**
- * 네이버 뉴스 검색 (상세 로그)
- */
 async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
-  const startTime = Date.now();
-  
   try {
     console.log(`  🔍 [네이버] "${interest}" 검색 시작...`);
     
@@ -409,24 +360,12 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
       }
     );
 
-    const elapsed = Date.now() - startTime;
-
-    if (!response.ok) {
-      console.log(`  ❌ [네이버] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
-      const errorText = await response.text();
-      console.log(`  📍 [네이버] 에러 응답: ${errorText.substring(0, 100)}`);
-      return [];
-    }
+    if (!response.ok) return [];
 
     const data = await response.json();
     const items = data.items || [];
     
-    console.log(`  ✅ [네이버] 성공: ${items.length}개 검색됨 (${elapsed}ms)`);
-    
-    if (items.length > 0) {
-      const firstTitle = items[0].title.replace(/<[^>]*>/g, '').substring(0, 40);
-      console.log(`  📰 [네이버] 최신 기사: "${firstTitle}..."`);
-    }
+    console.log(`  ✅ [네이버] 성공: ${items.length}개 검색됨`);
 
     return items.map((item: any) => ({
       title: item.title.replace(/<[^>]*>/g, ''),
@@ -437,17 +376,11 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
     }));
 
   } catch (error) {
-    const elapsed = Date.now() - startTime;
-    if (error instanceof Error) {
-      console.log(`  ❌ [네이버] 에러: ${error.message} (${elapsed}ms)`);
-    } else {
-      console.log(`  ❌ [네이버] 알 수 없는 에러 (${elapsed}ms)`);
-    }
     return [];
   }
 }
 
-async function sendEmail(params: {
+async function sendEmailWithTracking(params: {
   to: string;
   userName: string;
   sections: Array<{
@@ -456,6 +389,7 @@ async function sendEmail(params: {
     trustScore: number;
   }>;
   userId: string;
+  sendId: string;
 }) {
   const brevoApiKey = process.env.BREVO_API_KEY;
 
@@ -463,6 +397,18 @@ async function sendEmail(params: {
     console.warn('⚠️ BREVO_API_KEY가 설정되지 않았습니다');
     return;
   }
+
+  // 기본 HTML 생성
+  const originalHtml = generateEmailHTML(params);
+
+  // 트래킹 + 인터렉티브 요소 추가
+  const enhancedHtml = enhanceNewsletterEmail(originalHtml, {
+    sendId: params.sendId,
+    userId: params.userId,
+    quiz: SAMPLE_QUIZZES[0], // 오늘의 퀴즈
+    poll: SAMPLE_POLLS[0],   // 독자 투표
+    includeRating: true       // 별점 피드백
+  });
 
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -481,7 +427,7 @@ async function sendEmail(params: {
         name: params.userName
       }],
       subject: getSubjectLine(params.sections),
-      htmlContent: generateEmailHTML(params)
+      htmlContent: enhancedHtml
     })
   });
 
@@ -521,6 +467,7 @@ function generateEmailHTML(params: {
   });
 
   const interests = sections.map(s => s.interest).join(', ');
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ftti-umber.vercel.app';
 
   return `
 <!DOCTYPE html>
@@ -691,20 +638,20 @@ function generateEmailHTML(params: {
                     친구에게 FTTI 추천하고 리워드 받기 🎁
                 </div>
                 <div style="color: rgba(255,255,255,0.9); margin: 10px 0;">
-                    친구 5명 추천 시 프리미엄 1주일 무료!
+                    친구 1명 추천 시 프리미엄 1주일 무료!
                 </div>
-                <a href="https://ftti.app/join?ref=${userId}" class="cta-button">
+                <a href="${appUrl}/dashboard/referral" class="cta-button">
                     지금 추천하기
                 </a>
             </div>
         </div>
         
         <div class="footer">
-            <p>매일 오전 7시 & 오전 10시, 당신의 inbox로 배달됩니다 📬</p>
+            <p>매일 오전 8시 & 오전 10시, 당신의 inbox로 배달됩니다 📬</p>
             <p style="margin-top: 15px;">
-                <a href="https://ftti.app/preferences?id=${userId}">✏️ 관심사 변경</a>
+                <a href="${appUrl}/dashboard">✏️ 관심사 변경</a>
                 <span style="color: #ddd;">|</span>
-                <a href="https://ftti.app/unsubscribe?id=${userId}">📭 수신거부</a>
+                <a href="${appUrl}/unsubscribe?id=${userId}">📭 수신거부</a>
             </p>
             <p style="margin-top: 20px; color: #999; font-size: 11px;">
                 © 2026 FTTI. All rights reserved.

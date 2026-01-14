@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -16,14 +16,23 @@ const times = ['08:00', '10:00'];
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [step, setStep] = useState(1);
   const [interests, setInterests] = useState<Interest[]>([]);
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState('08:00');
   const [isLoading, setIsLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [refCode, setRefCode] = useState<string | null>(null);
 
   useEffect(() => {
+    // Referral code 확인
+    const ref = searchParams.get('ref');
+    if (ref) {
+      setRefCode(ref);
+      console.log('👨‍👨‍👦 Referral code 감지:', ref);
+    }
+
     // Get current user
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) {
@@ -40,7 +49,7 @@ export default function OnboardingPage() {
       .then(({ data }) => {
         if (data) setInterests(data);
       });
-  }, [router]);
+  }, [router, searchParams]);
 
   const toggleInterest = (id: string) => {
     setSelectedInterests((prev) =>
@@ -90,6 +99,26 @@ export default function OnboardingPage() {
 
       if (interestError) throw interestError;
 
+      // Referral 처리
+      if (refCode) {
+        try {
+          console.log('🎁 Referral 완료 처리 실행:', refCode);
+          await fetch('/api/referral/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code: refCode,
+              newUserId: user.id,
+              newUserEmail: user.email
+            }),
+          });
+          console.log('✅ Referral 완료!');
+        } catch (error) {
+          console.warn('⚠️ Referral 처리 실패:', error);
+          // Referral 실패해도 회원가입은 계속
+        }
+      }
+
       router.push('/dashboard');
     } catch (error) {
       console.error('Error saving profile:', error);
@@ -115,6 +144,14 @@ export default function OnboardingPage() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">
+          {/* Referral 메시지 */}
+          {refCode && step === 1 && (
+            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg text-center">
+              <p className="text-green-800 font-medium">🎉 초대로 가입하셨어요!</p>
+              <p className="text-green-600 text-sm mt-1">초대한 친구도 보상을 받습니다</p>
+            </div>
+          )}
+
           {/* Step 1: Interest Selection */}
           {step === 1 && (
             <>
