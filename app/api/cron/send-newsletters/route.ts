@@ -100,10 +100,10 @@ export async function GET(request: Request) {
             console.log('  🔍 IT 전문 RSS 수집 시작...');
             
             // IT 전문 소스들을 병렬로 수집
-            const [naverArticles, geekArticles, woowahanArticles, tossArticles, githubArticle] = await Promise.allSettled([
+            const [naverArticles, geekArticles, kakaoArticles, tossArticles, githubArticle] = await Promise.allSettled([
               fetchNaverNews(interest),
               fetchGeekNews(),
-              fetchWoowahanTech(),
+              fetchKakaoTech(),
               fetchTossTech(),
               fetchGitHubTrending()
             ]).then(results => [
@@ -114,16 +114,16 @@ export async function GET(request: Request) {
               results[4].status === 'fulfilled' ? results[4].value : null
             ]);
             
-            // IT는 네이버 2개 + 전문 RSS 2개 + GitHub 보너스
+            // IT는 네이버 2개 + 전문 RSS 2-3개 + GitHub 보너스
             articles = [
               ...naverArticles.slice(0, 2),
               ...geekArticles.slice(0, 1),
-              ...woowahanArticles.slice(0, 1),
+              ...kakaoArticles.slice(0, 1),
               ...tossArticles.slice(0, 1),
               ...(githubArticle ? [githubArticle] : [])
             ].slice(0, 5); // 최대 5개
             
-            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 우아한 ${woowahanArticles.length}개 | 토스 ${tossArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
+            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 카카오 ${kakaoArticles.length}개 | 토스 ${tossArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
             console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
           } else {
             console.log('  🔍 네이버 뉴스 검색 중...');
@@ -240,7 +240,8 @@ async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*'
+        'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*',
+        'Referer': 'https://www.google.com/'
       },
       signal: controller.signal
     });
@@ -302,14 +303,14 @@ async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 
   }
 }
 
-// 🔥 GeekNews 공식 RSS
+// 🔥 GeekNews 공식 RSS (수정!)
 async function fetchGeekNews(): Promise<NewsArticle[]> {
-  return parseRSSFeed('https://news.hada.io/rss/news', 'GeekNews', 5);
+  return parseRSSFeed('https://news.hada.io/rss', 'GeekNews', 5);
 }
 
-// 🍔 우아한형제들 기술블로그
-async function fetchWoowahanTech(): Promise<NewsArticle[]> {
-  return parseRSSFeed('https://techblog.woowahan.com/feed/', '우아한형제들', 3);
+// 🍊 카카오 기술블로그
+async function fetchKakaoTech(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://tech.kakao.com/feed/', '카카오', 3);
 }
 
 // 💳 토스 테크 블로그
@@ -322,9 +323,10 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch('https://api.gitterapp.com/repositories?language=&since=daily', {
+    // GitHub Trending API 수정
+    const response = await fetch('https://api.gitterapp.com/repositories', {
       headers: {
-        'User-Agent': 'Mozilla/5.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'application/json'
       },
       signal: controller.signal
@@ -332,29 +334,30 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     
     clearTimeout(timeout);
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.log(`  ⚠️ [GitHub] HTTP ${response.status}`);
+      return null;
+    }
 
     const repos = await response.json();
     if (!Array.isArray(repos) || repos.length === 0) return null;
 
-    const sortedRepos = repos
-      .filter((r: any) => r.forks > 100)
-      .sort((a: any, b: any) => b.forks - a.forks);
+    // 최근 인기 프로젝트 필터링
+    const topRepo = repos[0];
+    if (!topRepo) return null;
 
-    if (sortedRepos.length === 0) return null;
-
-    const topRepo = sortedRepos[0];
     console.log(`  ✅ [GitHub] ${topRepo.name} 수집`);
     
     return {
       title: `🔥 ${topRepo.name}`,
-      description: `${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars.toLocaleString()})`,
+      description: `${topRepo.description || '인기 급상승 프로젝트'} (⭐ ${topRepo.stars?.toLocaleString() || 'N/A'})`,
       link: topRepo.url,
       source: 'GitHub Trending',
       pubDate: new Date().toISOString()
     };
 
   } catch (error) {
+    console.log(`  ❌ [GitHub] 실패`);
     return null;
   }
 }
