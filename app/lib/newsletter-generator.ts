@@ -19,6 +19,7 @@ export interface NewsletterContent {
     summary: string;
     category: string;
     readTime: string;
+    source: string;      // ✨ 추가!
     sourceLink: string;
   }>;
   quickNews: Array<{
@@ -55,7 +56,7 @@ const PROMPTS = {
 📏 미션: ${interest} 분야의 뉴스를 5분 안에 읽을 수 있는 매력적인 뉴스레터로 만들기
 
 📰 주어진 뉴스 (최신순):
-${articles.slice(0, 8).map((a, i) => `
+${articles.slice(0, 10).map((a, i) => `
 ${i + 1}. ${a.title}
    출처: ${a.source}
    내용: ${a.description}
@@ -82,6 +83,11 @@ ${i + 1}. ${a.title}
    - 과장 금지
    - 출처와 일치하는 내용만
 
+5. 🔥 출처 유지 (필수!)
+   - 각 뉴스의 원본 출처(source)를 반드시 그대로 유지
+   - 예: "토스", "카카오", "GeekNews", "ZDNet Korea" 등
+   - 출처를 절대 변경하거나 "네이버"로 바꾸지 말 것!
+
 📊 출력 형식 (JSON만):
 {
   "mainNews": [
@@ -91,6 +97,7 @@ ${i + 1}. ${a.title}
       "summary": "첫 문장. 두 번째 문장. 세 번째 문장.",
       "category": "기술",
       "readTime": "1분",
+      "source": "토스",
       "sourceLink": "원문 URL"
     }
   ],
@@ -108,6 +115,7 @@ ${i + 1}. ${a.title}
 - 설명 텍스트 포함 금지
 - mainNews는 최소 3개, 최대 5개
 - quickNews는 최소 3개, 최대 5개
+- 각 뉴스의 source 필드는 원본 그대로 유지!
 `,
 
   koreanImprovement: (content: string) => `
@@ -138,8 +146,9 @@ ${content}
    - 톤앤매너 유지
 
 ⚠️ JSON 구조는 절대 변경 금지
-- emoji, title, summary, category, readTime, sourceLink 필드 유지
+- emoji, title, summary, category, readTime, source, sourceLink 필드 유지
 - 배열 순서 유지
+- 🔥 source 필드는 절대 변경하지 말 것! (원본 그대로 유지)
 `,
 
   factCheck: (content: string, sources: NewsArticle[]) => `
