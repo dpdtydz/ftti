@@ -44,7 +44,15 @@ export interface GenerationResult {
   };
 }
 
+/**
+ * 강화된 JSON 정리 함수
+ * - HTML 엔티티 디코딩
+ * - 잘못된 이스케이프 시퀀스 제거
+ * - 문자열 끝의 \\n 패턴 제거
+ * - JSON 내부의 쌍따옴표 문제 자동 수정
+ */
 function cleanJsonString(jsonStr: string): string {
+  // 1단계: HTML 엔티티 디코딩
   let cleaned = jsonStr
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
@@ -52,15 +60,104 @@ function cleanJsonString(jsonStr: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
   
-  cleaned = cleaned.replace(/\\\\/g, '\\');
+  // 2단계: 잘못된 이스케이프 시퀀스 정리
+  cleaned = cleaned.replace(/\\\\\\\\/g, '\\\\');
+  
+  // 3단계: 문자열 끝의 \\n 패턴 제거 (JSON 구조 파괴 원인)
+  // "title": "제목",\\n 형태를 "title": "제목" 으로 변환
+  cleaned = cleaned.replace(/",\\+n\s*/g, '"');
+  
+  // 4단계: 제목/요약 내부의 쌍따옴표 처리
+  // "title": "제목 "인용문" 포함" 형태를 안전하게 처리
+  cleaned = cleaned.replace(/"(title|summary|text)"\s*:\s*"([^"]*)"([^"]*)"([^"]*?)"/g, 
+    (match, field, before, middle, after) => {
+      // 내부 쌍따옴표를 작은따옴표로 변경
+      const safeMiddle = middle.replace(/"/g, "'");
+      return `"${field}": "${before}${safeMiddle}${after}"`;
+    }
+  );
   
   return cleaned;
 }
 
-const PROMPTS = {
-  mainGeneration: (interest: string, articles: NewsArticle[]) => `
-당신은 Morning Brew 스타일의 전문 뉴스 에디터입니다.
+/**
+ * JSON 복구 시도 함수
+ * 파싱 실패 시 부분적으로라도 데이터 추출 시도
+ */
+function attemptJsonRecovery(jsonStr: string): NewsletterContent | null {
+  try {
+    // mainNews 배열 추출 시도
+    const mainNewsMatch = jsonStr.match(/"mainNews"\s*:\s*\[([\s\S]*?)\]/);
+    const quickNewsMatch = jsonStr.match(/"quickNews"\s*:\s*\[([\s\S]*?)\]/);
+    
+    if (!mainNewsMatch && !quickNewsMatch) return null;
+    
+    const recovered: NewsletterContent = {
+      mainNews: [],
+      quickNews: []
+    };
+    
+    // mainNews 복구
+    if (mainNewsMatch) {
+      const newsItems = mainNewsMatch[1].match(/\{[^}]+\}/g) || [];
+      for (const item of newsItems) {
+        try {
+          const parsed = JSON.parse(item);
+          if (parsed.title && parsed.summary) {
+            recovered.mainNews.push({
+              emoji: parsed.emoji || '📰',
+              title: parsed.title,
+              summary: parsed.summary,
+              category: parsed.category || '뉴스',
+              readTime: parsed.readTime || '2분',
+              source: parsed.source || '네이버 뉴스',
+              sourceLink: parsed.sourceLink || ''
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+    
+    // quickNews 복구
+    if (quickNewsMatch) {
+      const quickItems = quickNewsMatch[1].match(/\{[^}]+\}/g) || [];
+      for (const item of quickItems) {
+        try {
+          const parsed = JSON.parse(item);
+          if (parsed.text) {
+            recovered.quickNews.push({
+              text: parsed.text,
+              link: parsed.link || ''
+            });
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+    
+    // 최소한의 데이터가 있으면 반환
+    if (recovered.mainNews.length > 0 || recovered.quickNews.length > 0) {
+      console.log(`🔧 JSON 복구 성공: mainNews ${recovered.mainNews.length}개, quickNews ${recovered.quickNews.length}개`);
+      return recovered;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('JSON 복구 실패:', error);
+    return null;
+  }
+}
 
+const PROMPTS = {
+  mainGeneration: (interest: string, articles: NewsArticle[], retryCount: number = 0) => {
+    const strictness = retryCount > 0 ? '\n\n⚠️⚠️⚠️ CRITICAL: Previous attempt FAILED due to JSON errors. You MUST produce valid JSON this time!\n' : '';
+    
+    return `
+당신은 Morning Brew 스타일의 전문 뉴스 에디터입니다.
+${strictness}
 📏 미션: ${interest} 분야의 뉴스를 5분 안에 읽을 수 있는 매력적인 뉴스레터로 만들기
 
 📰 주어진 뉴스 (최신순):
@@ -73,41 +170,34 @@ ${i + 1}. ${a.title}
 
 ⚠️ CRITICAL JSON RULES (반드시 준수):
 
-1. 🎯 EMOJI 필드 규칙 (매우 중요!)
+1. 🚫 제목/요약에 쌍따옴표 절대 금지
+   ❌ "KDI, 근로자 인지역량 조기 감퇴…"성과 보상 없는 임금 탓""
+   ✅ "KDI, 근로자 인지역량 조기 감퇴... 성과 보상 없는 임금 탓"
+   
+   쌍따옴표를 사용해야 한다면 작은따옴표(')로 대체:
+   ✅ "KDI, 근로자 인지역량 조기 감퇴... '성과 보상 없는 임금' 탓"
+
+2. 🚫 문자열 끝에 \\n 절대 금지
+   ❌ "title": "제목",\\n
+   ✅ "title": "제목"
+
+3. 🎯 EMOJI 필드 규칙
    ❌ 절대 금지: ":)", ":D", "^^", ";)" 같은 텍스트 이모티콘
    ✅ 반드시 사용: 🚀 💡 📊 🎯 🔥 💼 📱 🌟 ⚡ 🏆 같은 유니코드 이모지
-   
-   올바른 예시:
-   "emoji": "🚀"  ✅
-   "emoji": "💡"  ✅
-   "emoji": "📊"  ✅
-   
-   잘못된 예시:
-   "emoji": ":)"  ❌
-   "emoji": ""    ❌
-   "emoji": "smile" ❌
 
-2. 🔧 JSON 포맷 규칙
-   - 문자열 끝에 \\n 금지
+4. 🔧 JSON 포맷 규칙
    - 모든 필드는 쌍따옴표(")로 감싸기
    - 마지막 속성 뒤에 쉼표(,) 금지
-   
-   올바른 예시:
-   "title": "한 줄 제목"  ✅
-   
-   잘못된 예시:
-   "title": "한 줄 제목",\\n  ❌
-   "title": "한 줄 제목",     ❌ (마지막에 쉼표)
+   - 유효한 JSON만 출력 (코드 블록 없음)
 
-3. ✍️ 작성 규칙
-   - 제목: 20자 이내
-   - 요약: 2-3문장 (각 문장 20단어 이내)
-   - 번역체 금지 ("~에 대해" → "~을")
-   - 친근한 존댑말 사용
+5. ✍️ 작성 규칙
+   - 제목: 20자 이내, 쌍따옴표 없이
+   - 요약: 2-3문장, 쌍따옴표 없이
+   - 번역체 금지
+   - 친근한 존댑말
 
-4. 🔥 출처 유지 (필수!)
+6. 🔥 출처 유지 (필수!)
    - source 필드는 원본 그대로 유지
-   - "토스", "카카오", "네이버 뉴스" 등 변경 금지
 
 📊 출력 형식 (정확히 이 형식으로!):
 
@@ -120,15 +210,6 @@ ${i + 1}. ${a.title}
       "category": "기술",
       "readTime": "1분",
       "source": "토스",
-      "sourceLink": "https://example.com"
-    },
-    {
-      "emoji": "💡",
-      "title": "스타트업 투자 유치",
-      "summary": "국내 스타트업이 투자를 받았어요. 글로벌 진출을 준비합니다.",
-      "category": "경제",
-      "readTime": "2분",
-      "source": "카카오",
       "sourceLink": "https://example.com"
     }
   ],
@@ -143,10 +224,11 @@ ${i + 1}. ${a.title}
 ⚠️ 최종 체크:
 - mainNews: 3-5개
 - quickNews: 3-5개
-- 모든 emoji는 실제 유니코드 이모지 (🚀, 💡, 📊 등)
+- 제목/요약에 쌍따옴표 없음
 - 문자열 끝에 \\n 없음
 - 유효한 JSON만 출력
-`,
+`;
+  },
 
   koreanImprovement: (content: string) => `
 당신은 한국어 네이티브 에디터입니다.
@@ -176,6 +258,7 @@ ${content}
 - 배열 순서 유지
 - source 필드는 절대 변경하지 말 것!
 - emoji가 텍스트 이모티콘(":)")이면 유니코드 이모지(🚀)로 교체
+- 제목/요약에 쌍따옴표 사용 시 작은따옴표(')로 변경
 `,
 
   factCheck: (content: string, sources: NewsArticle[]) => `
@@ -241,9 +324,13 @@ export class NewsletterGenerator {
     return client;
   }
 
+  /**
+   * Groq로 초안 생성 (재시도 로직 포함)
+   */
   private async generateWithGroq(
     interest: string,
-    articles: NewsArticle[]
+    articles: NewsArticle[],
+    maxRetries: number = 3
   ): Promise<NewsletterContent> {
     if (!this.groq) {
       throw new Error('Groq API 키가 설정되지 않았습니다');
@@ -251,37 +338,79 @@ export class NewsletterGenerator {
 
     console.log('🚀 [Step 1] Groq로 초안 생성 중...');
 
-    const completion = await this.groq.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: `You are a professional newsletter editor. CRITICAL RULES:
-1. NEVER use text emoticons like :) :D ^^ ;) in the "emoji" field
-2. ALWAYS use real Unicode emojis like 🚀 💡 📊 🎯 🔥 in the "emoji" field
-3. NEVER add \\n at the end of string values
-4. Output ONLY valid JSON - no markdown, no code blocks, no explanations
-5. Never use HTML entities like &quot; - use proper escape sequences`
-        },
-        {
-          role: 'user',
-          content: PROMPTS.mainGeneration(interest, articles)
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`🔄 재시도 ${attempt}/${maxRetries - 1}...`);
         }
-      ],
-      model: 'llama-3.1-8b-instant',
-      temperature: 0.7,
-      max_tokens: 2500,
-      response_format: { type: 'json_object' }
-    });
 
-    const rawContent = completion.choices[0]?.message?.content || '{}';
-    const cleanedContent = cleanJsonString(rawContent);
-    
-    try {
-      return JSON.parse(cleanedContent);
-    } catch (error) {
-      console.error('❌ JSON 파싱 실패, 정리된 내용:', cleanedContent.substring(0, 500));
-      throw error;
+        const completion = await this.groq.chat.completions.create({
+          messages: [
+            {
+              role: 'system',
+              content: `You are a professional newsletter editor. CRITICAL RULES:
+1. NEVER use quotation marks (") inside title or summary fields
+2. Replace any quotation marks with single quotes (') if needed
+3. NEVER use text emoticons like :) :D ^^ ;) in the "emoji" field
+4. ALWAYS use real Unicode emojis like 🚀 💡 📊 🎯 🔥 in the "emoji" field
+5. NEVER add \\n at the end of string values
+6. Output ONLY valid JSON - no markdown, no code blocks, no explanations
+7. Never use HTML entities like &quot; - use proper escape sequences`
+            },
+            {
+              role: 'user',
+              content: PROMPTS.mainGeneration(interest, articles, attempt)
+            }
+          ],
+          model: 'llama-3.1-8b-instant',
+          temperature: 0.7,
+          max_tokens: 2500,
+          response_format: { type: 'json_object' }
+        });
+
+        const rawContent = completion.choices[0]?.message?.content || '{}';
+        const cleanedContent = cleanJsonString(rawContent);
+        
+        try {
+          const parsed = JSON.parse(cleanedContent);
+          console.log('✅ JSON 파싱 성공');
+          return parsed;
+        } catch (parseError) {
+          console.error(`❌ JSON 파싱 실패 (시도 ${attempt + 1}/${maxRetries})`);
+          
+          // 마지막 시도가 아니면 계속 재시도
+          if (attempt < maxRetries - 1) {
+            console.log('🔄 더 엄격한 규칙으로 재생성...');
+            continue;
+          }
+          
+          // 마지막 시도: JSON 복구 시도
+          console.log('🔧 JSON 복구 시도...');
+          const recovered = attemptJsonRecovery(cleanedContent);
+          
+          if (recovered && recovered.mainNews.length > 0) {
+            console.log('✅ JSON 복구 성공!');
+            return recovered;
+          }
+          
+          // 복구도 실패하면 에러
+          console.error('정리된 내용:', cleanedContent.substring(0, 500));
+          throw parseError;
+        }
+      } catch (error: any) {
+        // JSON 파싱 에러가 아닌 API 에러인 경우
+        if (!error.message?.includes('JSON') && !error.message?.includes('Unexpected')) {
+          throw error;
+        }
+        
+        // 마지막 시도였다면 에러 던지기
+        if (attempt === maxRetries - 1) {
+          throw error;
+        }
+      }
     }
+
+    throw new Error('Groq 생성 실패');
   }
 
   private async improveWithGemini(
@@ -396,7 +525,7 @@ export class NewsletterGenerator {
           model: 'gemini-2.0-flash-exp'
         });
 
-        const prompt = PROMPTS.mainGeneration(interest, articles);
+        const prompt = PROMPTS.mainGeneration(interest, articles, 0);
         const result = await model.generateContent(prompt);
         const text = result.response.text();
 
@@ -416,6 +545,7 @@ export class NewsletterGenerator {
           },
           metadata: {
             enginesUsed: [`Gemini 2.0 Flash (키 #${attempt + 1})`],
+            generatedAt: new Date().toISOString(),
             processingTime: Date.now() - this.startTime
           }
         };
