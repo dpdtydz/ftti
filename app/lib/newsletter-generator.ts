@@ -45,11 +45,6 @@ export interface GenerationResult {
 }
 
 /**
- * 강화된 JSON 정리 함수
- * - HTML 엔티티 디코딩
- * - 잘못된 이스케이프 시퀀스 제거
- * - 문자열 끝의 \\n 패턴 제거
- * - JSON 내부의 쌍따옴표 문제 자동 수정
  * JSON Schema for structured output
  * Groq API의 구조화된 출력을 위한 JSON Schema
  */
@@ -71,7 +66,7 @@ const NEWSLETTER_JSON_SCHEMA = {
           },
           summary: {
             type: "string",
-            description: "News summary without quotation marks, 2-3 sentences"
+            description: "News summary without quotation marks, 2-3 sentences, max 100 characters"
           },
           category: {
             type: "string",
@@ -102,7 +97,7 @@ const NEWSLETTER_JSON_SCHEMA = {
         properties: {
           text: {
             type: "string",
-            description: "Brief one-line news without quotation marks"
+            description: "Brief one-line news without quotation marks, max 50 characters"
           },
           link: {
             type: "string",
@@ -317,9 +312,10 @@ ${i + 1}. ${a.title}
    - 마지막 속성 뒤에 쉼표(,) 금지
    - 유효한 JSON만 출력 (코드 블록 없음)
 
-5. ✍️ 작성 규칙
-   - 제목: 20자 이내, 쌍따옴표 없이
-   - 요약: 2-3문장, 쌍따옴표 없이
+5. ✍️ 작성 규칙 (길이 제한 엄수!)
+   - 제목: 반드시 20자 이내, 쌍따옴표 없이
+   - 요약: 반드시 100자 이내, 2-3문장, 쌍따옴표 없이
+   - quickNews: 반드시 50자 이내, 한 문장
    - 번역체 금지
    - 친근한 존댑말
 
@@ -351,6 +347,9 @@ ${i + 1}. ${a.title}
 ⚠️ 최종 체크:
 - mainNews: 3-5개
 - quickNews: 3-5개
+- 제목 20자 이내
+- 요약 100자 이내
+- quickNews 50자 이내
 - 제목/요약에 쌍따옴표 없음
 - 문자열 끝에 \\n 없음
 - 유효한 JSON만 출력
@@ -386,6 +385,11 @@ ${content}
 - source 필드는 절대 변경하지 말 것!
 - emoji가 텍스트 이모티콘(":)")이면 유니코드 이모지(🚀)로 교체
 - 제목/요약에 쌍따옴표 사용 시 작은따옴표(')로 변경
+
+⚠️ 길이 제한 준수 (중요!)
+- 제목: 20자 이내
+- 요약: 100자 이내
+- quickNews: 50자 이내
 `,
 
   factCheck: (content: string, sources: NewsArticle[]) => `
@@ -453,6 +457,7 @@ export class NewsletterGenerator {
 
   /**
    * Groq로 초안 생성 (JSON Schema + 재시도 로직)
+   * max_tokens를 4096으로 증가하여 한글 콘텐츠 5개를 안전하게 생성
    */
   private async generateWithGroq(
     interest: string,
@@ -483,7 +488,8 @@ export class NewsletterGenerator {
 5. NEVER add \\n at the end of string values
 6. Output ONLY valid JSON - no markdown, no code blocks, no explanations
 7. Never use HTML entities like &quot; - use proper escape sequences
-8. Follow the JSON schema exactly`
+8. Follow the JSON schema exactly
+9. STRICT LENGTH LIMITS: title max 20 chars, summary max 100 chars, quickNews max 50 chars`
             },
             {
               role: 'user',
@@ -492,7 +498,7 @@ export class NewsletterGenerator {
           ],
           model: 'llama-3.1-8b-instant',
           temperature: 0.7,
-          max_tokens: 2500,
+          max_tokens: 4096, // 2500 → 4096으로 증가 (한글 5개 뉴스 + 요약 충분히 생성 가능)
           response_format: { 
             type: 'json_schema',
             json_schema: {
@@ -635,7 +641,7 @@ export class NewsletterGenerator {
         ],
         model: 'llama-3.3-70b-versatile',
         temperature: 0.3,
-        max_tokens: 1500,
+        max_tokens: 2048, // 1500 → 2048로 증가 (팩트체크 결과 충분히 생성 가능)
         response_format: { type: 'json_object' }
       });
 
