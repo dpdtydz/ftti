@@ -12,14 +12,14 @@ interface Interest {
   category: string;
 }
 
-const times = ['07:00', '08:00', '09:00', '10:00'];
+const times = ['08:00', '10:00'];
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [interests, setInterests] = useState<Interest[]>([]);
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
-  const [selectedTime, setSelectedTime] = useState('07:00');
+  const [selectedTime, setSelectedTime] = useState('08:00');
   const [isLoading, setIsLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
 
@@ -172,14 +172,14 @@ export default function OnboardingPage() {
                   <button
                     key={time}
                     onClick={() => setSelectedTime(time)}
-                    className={`p-4 rounded-xl border-2 text-center transition-all ${
+                    className={`p-6 rounded-xl border-2 text-center transition-all ${
                       selectedTime === time
                         ? 'border-indigo-600 bg-indigo-50'
                         : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
-                    <p className="text-2xl font-bold text-gray-900">{time}</p>
-                    <p className="text-sm text-gray-500">오전</p>
+                    <p className="text-3xl font-bold text-gray-900">{time}</p>
+                    <p className="text-sm text-gray-500 mt-1">오전</p>
                   </button>
                 ))}
               </div>
