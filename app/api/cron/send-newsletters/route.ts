@@ -97,39 +97,46 @@ export async function GET(request: Request) {
           const isITRelated = isITKeyword(interest);
 
           if (isITRelated) {
-            console.log('  🔍 IT 전문 RSS 수집 시작...');
+            console.log('  🔍 IT 전문 RSS 대량 수집 시작...');
             
-            // IT 전문 소스들을 병렬로 수집
-            const [naverArticles, geekArticles, kakaoArticles, tossArticles, githubArticle] = await Promise.allSettled([
+            // IT 전문 소스들을 병렬로 대량 수집 (최대한 많이!)
+            const [naverArticles, geekArticles, kakaoArticles, tossArticles, zdnetArticles, bloterArticles, githubArticle] = await Promise.allSettled([
               fetchNaverNews(interest),
               fetchGeekNews(),
               fetchKakaoTech(),
               fetchTossTech(),
+              fetchZDNet(),
+              fetchBloter(),
               fetchGitHubTrending()
             ]).then(results => [
               results[0].status === 'fulfilled' ? results[0].value : [],
               results[1].status === 'fulfilled' ? results[1].value : [],
               results[2].status === 'fulfilled' ? results[2].value : [],
               results[3].status === 'fulfilled' ? results[3].value : [],
-              results[4].status === 'fulfilled' ? results[4].value : null
+              results[4].status === 'fulfilled' ? results[4].value : [],
+              results[5].status === 'fulfilled' ? results[5].value : [],
+              results[6].status === 'fulfilled' ? results[6].value : null
             ]);
             
-            // IT는 네이버 2개 + 전문 RSS 2-3개 + GitHub 보너스
+            // 모든 뉴스를 합쳐서 AI한테 선택하게 함 (최대 30개)
             articles = [
-              ...naverArticles.slice(0, 2),
-              ...geekArticles.slice(0, 1),
-              ...kakaoArticles.slice(0, 1),
-              ...tossArticles.slice(0, 1),
-              ...(githubArticle ? [githubArticle] : [])
-            ].slice(0, 5); // 최대 5개
+              ...naverArticles,      // 10개
+              ...geekArticles,       // 10개
+              ...kakaoArticles,      // 5개
+              ...tossArticles,       // 5개
+              ...zdnetArticles,      // 5개
+              ...bloterArticles,     // 5개
+              ...(githubArticle ? [githubArticle] : [])  // 1개
+            ].slice(0, 30);  // 최대 30개 후보를 AI한테 전달
             
-            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 카카오 ${kakaoArticles.length}개 | 토스 ${tossArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
-            console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
+            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 카카오 ${kakaoArticles.length}개 | 토스 ${tossArticles.length}개 | ZDNet ${zdnetArticles.length}개 | 블로터 ${bloterArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
+            console.log(`  ✅ AI 선별 대상: ${articles.length}개 뉴스 → AI가 퀄리티 높은 4-5개 선택`);
           } else {
             console.log('  🔍 네이버 뉴스 검색 중...');
             const naverArticles = await fetchNaverNews(interest);
-            articles = naverArticles.slice(0, 3);
-            console.log(`  ✅ 네이버: ${articles.length}개 수집`);
+            // 일반 관심사도 10개 수집해서 AI가 선택
+            articles = naverArticles.slice(0, 10);
+            console.log(`  ✅ AI 선별 대상: ${articles.length}개 뉴스 → AI가 퀄리티 높은 3-4개 선택`);
           }
 
           if (articles.length === 0) {
@@ -137,6 +144,7 @@ export async function GET(request: Request) {
             continue;
           }
 
+          // AI가 30개 중에서 가장 좋은 뉴스만 선별
           const result = await generator.generate(interest, articles);
 
           sections.push({
@@ -146,6 +154,7 @@ export async function GET(request: Request) {
           });
 
           console.log(`  ✅ ${interest} 생성 완료 (신뢰도: ${result.validation.trustScore}점)`);
+          console.log(`  📰 최종 선택된 뉴스: ${result.newsletter.mainNews.length}개`);
         }
 
         if (sections.length === 0) {
@@ -232,7 +241,7 @@ function isITKeyword(interest: string): boolean {
 }
 
 // 📡 RSS 파싱 공통 함수
-async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 5): Promise<NewsArticle[]> {
+async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 10): Promise<NewsArticle[]> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -303,19 +312,29 @@ async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 
   }
 }
 
-// 🔥 GeekNews 공식 RSS (수정!)
+// 🔥 GeekNews 공식 RSS
 async function fetchGeekNews(): Promise<NewsArticle[]> {
-  return parseRSSFeed('https://news.hada.io/rss', 'GeekNews', 5);
+  return parseRSSFeed('https://news.hada.io/rss', 'GeekNews', 10);
 }
 
 // 🍊 카카오 기술블로그
 async function fetchKakaoTech(): Promise<NewsArticle[]> {
-  return parseRSSFeed('https://tech.kakao.com/feed/', '카카오', 3);
+  return parseRSSFeed('https://tech.kakao.com/feed/', '카카오', 5);
 }
 
 // 💳 토스 테크 블로그
 async function fetchTossTech(): Promise<NewsArticle[]> {
-  return parseRSSFeed('https://toss.tech/rss.xml', '토스', 3);
+  return parseRSSFeed('https://toss.tech/rss.xml', '토스', 5);
+}
+
+// 📰 ZDNet Korea
+async function fetchZDNet(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://zdnet.co.kr/rss/news.xml', 'ZDNet Korea', 5);
+}
+
+// 🖥️ 블로터
+async function fetchBloter(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://www.bloter.net/feed/', '블로터', 5);
 }
 
 async function fetchGitHubTrending(): Promise<NewsArticle | null> {
@@ -323,7 +342,7 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    // GitHub Trending API 수정
+    // GitHub Trending API
     const response = await fetch('https://api.gitterapp.com/repositories', {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -342,7 +361,7 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     const repos = await response.json();
     if (!Array.isArray(repos) || repos.length === 0) return null;
 
-    // 최근 인기 프로젝트 필터링
+    // 최근 인기 프로젝트
     const topRepo = repos[0];
     if (!topRepo) return null;
 
@@ -628,7 +647,7 @@ function generateEmailHTML(params: {
                         📰 ${section.interest}
                     </div>
                     
-                    ${section.newsletter.mainNews.slice(0, 4).map((news: any) => `
+                    ${section.newsletter.mainNews.slice(0, 5).map((news: any) => `
                         <div class="news-item">
                             <div class="news-meta">
                                 <span class="category-badge">${news.category}</span>
