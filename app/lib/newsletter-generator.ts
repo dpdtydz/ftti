@@ -19,7 +19,7 @@ export interface NewsletterContent {
     summary: string;
     category: string;
     readTime: string;
-    source: string;      // ✨ 추가!
+    source: string;
     sourceLink: string;
   }>;
   quickNews: Array<{
@@ -44,6 +44,24 @@ export interface GenerationResult {
     generatedAt: string;
     processingTime: number;
   };
+}
+
+/**
+ * JSON 정리 함수 - HTML 엔티티 및 잘못된 문자 처리
+ */
+function cleanJsonString(jsonStr: string): string {
+  // HTML 엔티티 디코딩
+  let cleaned = jsonStr
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+  
+  // 잘못된 이스케이프 수정
+  cleaned = cleaned.replace(/\\\\/g, '\\');
+  
+  return cleaned;
 }
 
 /**
@@ -72,7 +90,7 @@ ${i + 1}. ${a.title}
 2. 구조
    - 제목: 한 줄로 핵심 전달 (20자 이내)
    - 요약: 2-3문장으로 핵심만 (각 문장 20단어 이내)
-   - 이모지: 각 뉴스에 어울리는 이모지 1개
+   - 이모지: 각 뉴스에 어울리는 이모지 1개 (필수!)
 
 3. 번역체 절대 금지
    ❌ "~에 대해", "~에 있어", "~에 관해", "~함에 있어"
@@ -87,6 +105,13 @@ ${i + 1}. ${a.title}
    - 각 뉴스의 원본 출처(source)를 반드시 그대로 유지
    - 예: "토스", "카카오", "GeekNews", "ZDNet Korea" 등
    - 출처를 절대 변경하거나 "네이버"로 바꾸지 말 것!
+
+6. 🚨 JSON 검증 (매우 중요!)
+   - 반드시 유효한 JSON만 출력
+   - 모든 문자열은 큰따옴표(")로 감싸기
+   - 특수문자는 이스케이프 처리 (\", \\n 등)
+   - emoji 필드는 절대 빈 문자열 금지 (반드시 이모지 입력!)
+   - title 뒤에는 반드시 콜론(:) 필요
 
 📊 출력 형식 (JSON만):
 {
@@ -116,6 +141,7 @@ ${i + 1}. ${a.title}
 - mainNews는 최소 3개, 최대 5개
 - quickNews는 최소 3개, 최대 5개
 - 각 뉴스의 source 필드는 원본 그대로 유지!
+- emoji는 절대 빈 문자열 금지! (🚀, 💡, 📊, 🎯, 🔥 등 사용)
 `,
 
   koreanImprovement: (content: string) => `
@@ -149,6 +175,7 @@ ${content}
 - emoji, title, summary, category, readTime, source, sourceLink 필드 유지
 - 배열 순서 유지
 - 🔥 source 필드는 절대 변경하지 말 것! (원본 그대로 유지)
+- emoji가 빈 문자열이면 적절한 이모지 추가 (🚀, 💡, 📊, 🎯, 🔥 등)
 `,
 
   factCheck: (content: string, sources: NewsArticle[]) => `
@@ -237,7 +264,7 @@ export class NewsletterGenerator {
       messages: [
         {
           role: 'system',
-          content: 'You are a professional newsletter editor. Always output valid JSON only.'
+          content: 'You are a professional newsletter editor. Always output valid JSON only. Never use HTML entities like &quot; - use proper JSON escape sequences instead.'
         },
         {
           role: 'user',
@@ -250,8 +277,15 @@ export class NewsletterGenerator {
       response_format: { type: 'json_object' }
     });
 
-    const content = completion.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    const rawContent = completion.choices[0]?.message?.content || '{}';
+    const cleanedContent = cleanJsonString(rawContent);
+    
+    try {
+      return JSON.parse(cleanedContent);
+    } catch (error) {
+      console.error('❌ JSON 파싱 실패, 정리된 내용:', cleanedContent.substring(0, 500));
+      throw error;
+    }
   }
 
   /**
@@ -284,27 +318,26 @@ export class NewsletterGenerator {
         // JSON 추출
         const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
                           text.match(/\{[\s\S]*\}/);
-        const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const rawJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const cleanedJson = cleanJsonString(rawJson);
 
         console.log(`✅ Gemini API 키 #${attempt + 1} 성공`);
-        return JSON.parse(cleanJson.trim());
+        return JSON.parse(cleanedJson.trim());
 
       } catch (error: any) {
         const is429 = error?.message?.includes('429') || error?.message?.includes('quota');
         
         if (is429 && attempt < this.geminiClients.length - 1) {
           console.log(`⚠️ Gemini API 키 #${attempt + 1} 할당량 초과, 다음 키로 재시도...`);
-          continue; // 다음 키로 재시도
+          continue;
         }
         
-        // 마지막 키도 실패하거나 429가 아닌 에러
         console.error('❌ Gemini 개선 실패:', error?.message || error);
         console.log('⚠️ 초안 그대로 사용');
         return draft;
       }
     }
 
-    // 모든 키 실패 시
     console.log('⚠️ 모든 Gemini API 키 할당량 초과, 초안 그대로 사용');
     return draft;
   }
@@ -326,25 +359,34 @@ export class NewsletterGenerator {
 
     console.log('🔍 [Step 3] Groq로 팩트 체크 중...');
 
-    const completion = await this.groq.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a fact-checker. Output valid JSON only.'
-        },
-        {
-          role: 'user',
-          content: PROMPTS.factCheck(JSON.stringify(content), sources)
-        }
-      ],
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.3,
-      max_tokens: 1500,
-      response_format: { type: 'json_object' }
-    });
+    try {
+      const completion = await this.groq.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a fact-checker. Output valid JSON only.'
+          },
+          {
+            role: 'user',
+            content: PROMPTS.factCheck(JSON.stringify(content), sources)
+          }
+        ],
+        model: 'llama-3.3-70b-versatile',
+        temperature: 0.3,
+        max_tokens: 1500,
+        response_format: { type: 'json_object' }
+      });
 
-    const text = completion.choices[0]?.message?.content || '{}';
-    return JSON.parse(text);
+      const text = completion.choices[0]?.message?.content || '{}';
+      return JSON.parse(cleanJsonString(text));
+    } catch (error) {
+      console.error('❌ 팩트 체크 실패:', error);
+      return {
+        issues: [],
+        trustScore: 70,
+        verified: false
+      };
+    }
   }
 
   /**
@@ -376,12 +418,13 @@ export class NewsletterGenerator {
 
         const jsonMatch = text.match(/```json\s*\n?([\s\S]*?)\n?```/) ||
                           text.match(/\{[\s\S]*\}/);
-        const cleanJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const rawJson = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        const cleanedJson = cleanJsonString(rawJson);
 
         console.log(`✅ Gemini API 키 #${attempt + 1} 성공 (Fallback)`);
         
         return {
-          newsletter: JSON.parse(cleanJson.trim()),
+          newsletter: JSON.parse(cleanedJson.trim()),
           validation: {
             trustScore: 75,
             verified: false,
@@ -401,7 +444,6 @@ export class NewsletterGenerator {
           continue;
         }
         
-        // 마지막 키도 실패
         if (attempt === this.geminiClients.length - 1) {
           throw new Error(`모든 Gemini API 키 할당량 초과: ${error?.message || error}`);
         }
@@ -420,7 +462,6 @@ export class NewsletterGenerator {
   ): Promise<GenerationResult> {
     this.startTime = Date.now();
     
-    // 런타임에 로그 (빌드 타임 에러 방지)
     console.log(`🔑 Gemini API 키: ${this.geminiClients.length}개 사용 가능`);
 
     try {
@@ -438,7 +479,6 @@ export class NewsletterGenerator {
 
       // 신뢰도가 낮으면 경고 추가
       if (validation.trustScore < 70) {
-        // 경고 메시지를 첫 번째 뉴스에 추가
         if (improved.mainNews.length > 0) {
           improved.mainNews[0].summary = 
             '⚠️ 자동 생성 콘텐츠입니다. 원문을 확인해주세요.\n\n' + 
