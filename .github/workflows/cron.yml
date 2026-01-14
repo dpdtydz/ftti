@@ -2,30 +2,40 @@ name: Fixed Time Newsletter Cron
 
 on:
   schedule:
-    # 1. UTC 23:00 (한국 오전 8시)
-    # 2. UTC 01:00 (한국 오전 10시)
-    - cron: '0 23,1 * * *'
-  workflow_dispatch: 
+    # 오전 8시 KST = 전날 23시 UTC
+    - cron: '0 23 * * *'
+    # 오전 10시 KST = 오전 1시 UTC  
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      time:
+        description: '발송 시간 (08:00 또는 10:00)'
+        required: false
+        default: '08:00'
 
 jobs:
-  run-batch:
+  send-8am-newsletter:
+    # 23시 UTC 크론이 실행되거나, 수동 실행 시에만 실행
+    if: github.event.schedule == '0 23 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Call Vercel API (8AM)
-        if: github.event.schedule == '0 23 * * *'
+      - name: Send 8AM KST Newsletter
         run: |
+          echo "📧 Sending 8AM KST newsletter..."
           curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=08:00" \
-          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP Status: %{http_code}\n"
 
-      - name: Call Vercel API (10AM)
-        if: github.event.schedule == '0 1 * * *'
+  send-10am-newsletter:
+    # 1시 UTC 크론이 실행될 때만 실행
+    if: github.event.schedule == '0 1 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send 10AM KST Newsletter
         run: |
+          echo "📧 Sending 10AM KST newsletter..."
           curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=10:00" \
-          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
-          
-      - name: Manual Trigger (Optional)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "Manual trigger executed. Calling 8AM batch by default."
-          curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=08:00" \
-          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP Status: %{http_code}\n"
