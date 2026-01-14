@@ -50,82 +50,209 @@ export interface GenerationResult {
  * - 잘못된 이스케이프 시퀀스 제거
  * - 문자열 끝의 \\n 패턴 제거
  * - JSON 내부의 쌍따옴표 문제 자동 수정
+ * JSON Schema for structured output
+ * Groq API의 구조화된 출력을 위한 JSON Schema
+ */
+const NEWSLETTER_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    mainNews: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          emoji: {
+            type: "string",
+            description: "Unicode emoji (e.g., 🚀 💡 📊) - NO text emoticons like :) :D"
+          },
+          title: {
+            type: "string",
+            description: "News title without quotation marks, max 20 characters"
+          },
+          summary: {
+            type: "string",
+            description: "News summary without quotation marks, 2-3 sentences"
+          },
+          category: {
+            type: "string",
+            description: "News category"
+          },
+          readTime: {
+            type: "string",
+            description: "Estimated read time (e.g., 1분, 2분)"
+          },
+          source: {
+            type: "string",
+            description: "Original news source"
+          },
+          sourceLink: {
+            type: "string",
+            description: "URL to the original article"
+          }
+        },
+        required: ["emoji", "title", "summary", "category", "readTime", "source", "sourceLink"]
+      },
+      minItems: 3,
+      maxItems: 5
+    },
+    quickNews: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "Brief one-line news without quotation marks"
+          },
+          link: {
+            type: "string",
+            description: "URL to the news article"
+          }
+        },
+        required: ["text", "link"]
+      },
+      minItems: 3,
+      maxItems: 5
+    }
+  },
+  required: ["mainNews", "quickNews"]
+};
+
+/**
+ * 강화된 JSON 정리 함수
+ * - HTML 엔티티 디코딩
+ * - 잘못된 이스케이프 시퀀스 제거
+ * - 문자열 내 쌍따옴표 자동 이스케이프
+ * - 잘못된 개행 문자 제거
  */
 function cleanJsonString(jsonStr: string): string {
   // 1단계: HTML 엔티티 디코딩
   let cleaned = jsonStr
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
+    .replace(/&#039;/g, "'")
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ');
   
-  // 2단계: 잘못된 이스케이프 시퀀스 정리
+  // 2단계: 잘못된 백슬래시 제거 (\\\\\\\\를 \\\\로)
   cleaned = cleaned.replace(/\\\\\\\\/g, '\\\\');
   
-  // 3단계: 문자열 끝의 \\n 패턴 제거 (JSON 구조 파괴 원인)
-  // "title": "제목",\\n 형태를 "title": "제목" 으로 변환
-  cleaned = cleaned.replace(/",\\+n\s*/g, '"');
+  // 3단계: 문자열 끝의 잘못된 \\n 패턴 제거
+  // "title": "제목",\\n 또는 "title": "제목",\n 형태를 "title": "제목" 으로 변환
+  cleaned = cleaned.replace(/",\\\\n\s*/g, '"');
+  cleaned = cleaned.replace(/",\\n\s*/g, '"');
+  cleaned = cleaned.replace(/",\s*\\n/g, '"');
   
-  // 4단계: 제목/요약 내부의 쌍따옴표 처리
-  // "title": "제목 "인용문" 포함" 형태를 안전하게 처리
-  cleaned = cleaned.replace(/"(title|summary|text)"\s*:\s*"([^"]*)"([^"]*)"([^"]*?)"/g, 
-    (match, field, before, middle, after) => {
-      // 내부 쌍따옴표를 작은따옴표로 변경
-      const safeMiddle = middle.replace(/"/g, "'");
-      return `"${field}": "${before}${safeMiddle}${after}"`;
+  // 4단계: 필드 값 내부의 이스케이프되지 않은 쌍따옴표 처리
+  // "title": "제목 "인용문" 포함" 형태를 "title": "제목 '인용문' 포함" 으로 안전하게 변환
+  cleaned = cleaned.replace(
+    /"(title|summary|text)"\s*:\s*"([^"]*?)"/g,
+    (match, field, value) => {
+      // 값 내부의 쌍따옴표를 찾아서 작은따옴표로 변경
+      // 단, 이미 이스케이프된 \" 는 제외
+      const safeValue = value.replace(/(?<!\\)"/g, "'");
+      return `"${field}": "${safeValue}"`;
     }
   );
+  
+  // 5단계: 연속된 쉼표 제거
+  cleaned = cleaned.replace(/,\s*,/g, ',');
+  
+  // 6단계: 배열/객체 끝의 불필요한 쉼표 제거
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
   
   return cleaned;
 }
 
 /**
- * JSON 복구 시도 함수
+ * 강화된 JSON 복구 함수
  * 파싱 실패 시 부분적으로라도 데이터 추출 시도
  */
 function attemptJsonRecovery(jsonStr: string): NewsletterContent | null {
   try {
-    // mainNews 배열 추출 시도
-    const mainNewsMatch = jsonStr.match(/"mainNews"\s*:\s*\[([\s\S]*?)\]/);
-    const quickNewsMatch = jsonStr.match(/"quickNews"\s*:\s*\[([\s\S]*?)\]/);
-    
-    if (!mainNewsMatch && !quickNewsMatch) return null;
+    console.log('🔧 JSON 복구 시도 중...');
     
     const recovered: NewsletterContent = {
       mainNews: [],
       quickNews: []
     };
     
-    // mainNews 복구
+    // mainNews 배열 추출 - 더 관대한 정규식 사용
+    const mainNewsMatch = jsonStr.match(/"mainNews"\s*:\s*\[([\s\S]*?)(?:\],|\]$)/);
     if (mainNewsMatch) {
-      const newsItems = mainNewsMatch[1].match(/\{[^}]+\}/g) || [];
-      for (const item of newsItems) {
-        try {
-          const parsed = JSON.parse(item);
-          if (parsed.title && parsed.summary) {
-            recovered.mainNews.push({
-              emoji: parsed.emoji || '📰',
-              title: parsed.title,
-              summary: parsed.summary,
-              category: parsed.category || '뉴스',
-              readTime: parsed.readTime || '2분',
-              source: parsed.source || '네이버 뉴스',
-              sourceLink: parsed.sourceLink || ''
-            });
-          }
-        } catch {
+      const mainNewsContent = mainNewsMatch[1];
+      
+      // 각 뉴스 아이템을 개별적으로 추출 (중괄호 쌍으로)
+      let depth = 0;
+      let currentItem = '';
+      let inString = false;
+      let escapeNext = false;
+      
+      for (let i = 0; i < mainNewsContent.length; i++) {
+        const char = mainNewsContent[i];
+        const prevChar = i > 0 ? mainNewsContent[i - 1] : '';
+        
+        if (escapeNext) {
+          currentItem += char;
+          escapeNext = false;
           continue;
+        }
+        
+        if (char === '\\') {
+          escapeNext = true;
+          currentItem += char;
+          continue;
+        }
+        
+        if (char === '"' && prevChar !== '\\') {
+          inString = !inString;
+        }
+        
+        if (!inString) {
+          if (char === '{') depth++;
+          if (char === '}') depth--;
+        }
+        
+        currentItem += char;
+        
+        // 완전한 객체를 찾았을 때
+        if (depth === 0 && currentItem.trim().endsWith('}')) {
+          try {
+            const cleanedItem = cleanJsonString(currentItem.trim());
+            const parsed = JSON.parse(cleanedItem);
+            
+            if (parsed.title && parsed.summary) {
+              recovered.mainNews.push({
+                emoji: parsed.emoji || '📰',
+                title: parsed.title,
+                summary: parsed.summary,
+                category: parsed.category || '뉴스',
+                readTime: parsed.readTime || '2분',
+                source: parsed.source || '네이버 뉴스',
+                sourceLink: parsed.sourceLink || ''
+              });
+            }
+          } catch (e) {
+            // 개별 아이템 파싱 실패는 무시
+          }
+          currentItem = '';
         }
       }
     }
     
-    // quickNews 복구
+    // quickNews 배열 추출
+    const quickNewsMatch = jsonStr.match(/"quickNews"\s*:\s*\[([\s\S]*?)(?:\],|\]$)/);
     if (quickNewsMatch) {
-      const quickItems = quickNewsMatch[1].match(/\{[^}]+\}/g) || [];
+      const quickNewsContent = quickNewsMatch[1];
+      
+      // 간단한 객체 추출
+      const quickItems = quickNewsContent.match(/\{[^}]*"text"[^}]*\}/g) || [];
       for (const item of quickItems) {
         try {
-          const parsed = JSON.parse(item);
+          const cleanedItem = cleanJsonString(item);
+          const parsed = JSON.parse(cleanedItem);
           if (parsed.text) {
             recovered.quickNews.push({
               text: parsed.text,
@@ -139,14 +266,14 @@ function attemptJsonRecovery(jsonStr: string): NewsletterContent | null {
     }
     
     // 최소한의 데이터가 있으면 반환
-    if (recovered.mainNews.length > 0 || recovered.quickNews.length > 0) {
-      console.log(`🔧 JSON 복구 성공: mainNews ${recovered.mainNews.length}개, quickNews ${recovered.quickNews.length}개`);
+    if (recovered.mainNews.length > 0) {
+      console.log(`✅ JSON 복구 성공: mainNews ${recovered.mainNews.length}개, quickNews ${recovered.quickNews.length}개`);
       return recovered;
     }
     
     return null;
   } catch (error) {
-    console.error('JSON 복구 실패:', error);
+    console.error('❌ JSON 복구 실패:', error);
     return null;
   }
 }
@@ -325,7 +452,7 @@ export class NewsletterGenerator {
   }
 
   /**
-   * Groq로 초안 생성 (재시도 로직 포함)
+   * Groq로 초안 생성 (JSON Schema + 재시도 로직)
    */
   private async generateWithGroq(
     interest: string,
@@ -355,7 +482,8 @@ export class NewsletterGenerator {
 4. ALWAYS use real Unicode emojis like 🚀 💡 📊 🎯 🔥 in the "emoji" field
 5. NEVER add \\n at the end of string values
 6. Output ONLY valid JSON - no markdown, no code blocks, no explanations
-7. Never use HTML entities like &quot; - use proper escape sequences`
+7. Never use HTML entities like &quot; - use proper escape sequences
+8. Follow the JSON schema exactly`
             },
             {
               role: 'user',
@@ -365,7 +493,14 @@ export class NewsletterGenerator {
           model: 'llama-3.1-8b-instant',
           temperature: 0.7,
           max_tokens: 2500,
-          response_format: { type: 'json_object' }
+          response_format: { 
+            type: 'json_schema',
+            json_schema: {
+              name: 'newsletter_schema',
+              strict: true,
+              schema: NEWSLETTER_JSON_SCHEMA
+            }
+          } as any
         });
 
         const rawContent = completion.choices[0]?.message?.content || '{}';
@@ -374,9 +509,16 @@ export class NewsletterGenerator {
         try {
           const parsed = JSON.parse(cleanedContent);
           console.log('✅ JSON 파싱 성공');
+          
+          // 추가 검증: mainNews와 quickNews가 있는지 확인
+          if (!parsed.mainNews || !Array.isArray(parsed.mainNews) || parsed.mainNews.length === 0) {
+            throw new Error('mainNews가 비어있거나 유효하지 않습니다');
+          }
+          
           return parsed;
         } catch (parseError) {
           console.error(`❌ JSON 파싱 실패 (시도 ${attempt + 1}/${maxRetries})`);
+          console.error('파싱 에러:', parseError);
           
           // 마지막 시도가 아니면 계속 재시도
           if (attempt < maxRetries - 1) {
@@ -394,12 +536,15 @@ export class NewsletterGenerator {
           }
           
           // 복구도 실패하면 에러
-          console.error('정리된 내용:', cleanedContent.substring(0, 500));
+          console.error('정리된 내용 (처음 500자):', cleanedContent.substring(0, 500));
           throw parseError;
         }
       } catch (error: any) {
+        console.error(`❌ Groq API 에러 (시도 ${attempt + 1}/${maxRetries}):`, error?.message || error);
+        
         // JSON 파싱 에러가 아닌 API 에러인 경우
-        if (!error.message?.includes('JSON') && !error.message?.includes('Unexpected')) {
+        if (!error.message?.includes('JSON') && !error.message?.includes('Unexpected') && !error.message?.includes('mainNews')) {
+          // API 에러는 재시도하지 않고 바로 던지기
           throw error;
         }
         
@@ -410,7 +555,7 @@ export class NewsletterGenerator {
       }
     }
 
-    throw new Error('Groq 생성 실패');
+    throw new Error('Groq 생성 실패: 최대 재시도 횟수 초과');
   }
 
   private async improveWithGemini(
