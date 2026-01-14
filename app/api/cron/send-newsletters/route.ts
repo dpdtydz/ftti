@@ -23,25 +23,22 @@ function getSupabaseClient() {
 
 export async function GET(request: Request) {
   try {
-    // GitHub Actions에서 ?time=08:00 형태로 전달받음
     const { searchParams } = new URL(request.url);
     let kstTime = searchParams.get('time');
 
-    // 만약 파라미터가 없다면 현재 한국 시간 계산 (HH:mm 형식)
     if (!kstTime) {
       kstTime = new Date().toLocaleString('ko-KR', {
         timeZone: 'Asia/Seoul',
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
-      }).replace(/\s/g, ''); // "08:00" 형태
+      }).replace(/\s/g, '');
     }
 
     console.log(`🚀 뉴스레터 발송 시작 (대상 시간: ${kstTime})`);
 
     const supabase = getSupabaseClient();
 
-    // send_time이 kstTime과 일치하는 활성 사용자만 조회
     const { data: users, error: usersError } = await supabase
       .from('user_profiles')
       .select(`
@@ -63,7 +60,6 @@ export async function GET(request: Request) {
       throw usersError;
     }
 
-    // 관심사가 없는 사용자 필터링
     const activeUsers = (users || []).filter(user => {
       const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
       return interests.length > 0;
@@ -87,7 +83,6 @@ export async function GET(request: Request) {
       skipped: 0
     };
 
-    // 각 사용자별 처리
     for (const user of activeUsers) {
       try {
         const interests = user.user_interests?.map((ui: any) => ui.interests?.name).filter(Boolean) || [];
@@ -104,19 +99,26 @@ export async function GET(request: Request) {
           if (isITRelated) {
             console.log('  🔍 IT 전문 뉴스 수집 시작...');
             
-            const [geekArticles, naverArticles, githubArticle] = await Promise.all([
+            // 네이버를 메인으로, GeekNews/GitHub는 보너스
+            const naverArticles = await fetchNaverNews(interest);
+            
+            // GeekNews와 GitHub는 실패해도 괜찮음
+            const [geekArticles, githubArticle] = await Promise.allSettled([
               fetchGeekNews(),
-              fetchNaverNews(interest),
               fetchGitHubTrending()
+            ]).then(results => [
+              results[0].status === 'fulfilled' ? results[0].value : [],
+              results[1].status === 'fulfilled' ? results[1].value : null
             ]);
             
+            // IT는 네이버 3개 + 보너스 1개
             articles = [
-              ...geekArticles.slice(0, 1),
-              ...naverArticles.slice(0, 2),
+              ...naverArticles.slice(0, 3),
+              ...(geekArticles.length > 0 ? geekArticles.slice(0, 1) : []),
               ...(githubArticle ? [githubArticle] : [])
-            ];
+            ].slice(0, 4); // 최대 4개
             
-            console.log(`  📊 수집 결과: GeekNews ${geekArticles.length}개 | 네이버 ${naverArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
+            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${Array.isArray(geekArticles) ? geekArticles.length : 0}개 | GitHub ${githubArticle ? 1 : 0}개`);
             console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
           } else {
             console.log('  🔍 네이버 뉴스 검색 중...');
@@ -147,7 +149,6 @@ export async function GET(request: Request) {
           continue;
         }
 
-        // 1. DB에 newsletter_send 레코드 먼저 생성 (sendId 필요)
         const { data: newsletterSend, error: insertError } = await supabase
           .from('newsletter_sends')
           .insert({
@@ -167,7 +168,6 @@ export async function GET(request: Request) {
           throw new Error('발송 기록 생성 실패');
         }
 
-        // 2. 이메일 발송 (트래킹 + 인터랙티브 포함)
         await sendEmailWithTracking({
           to: user.email,
           userName: user.nickname || user.email.split('@')[0],
@@ -176,7 +176,6 @@ export async function GET(request: Request) {
           sendId: newsletterSend.id
         });
 
-        // 3. 발송 상태 업데이트
         await supabase
           .from('newsletter_sends')
           .update({
@@ -228,43 +227,33 @@ function isITKeyword(interest: string): boolean {
 }
 
 async function fetchGeekNews(): Promise<NewsArticle[]> {
-  const startTime = Date.now();
-  
   try {
-    console.log('  📡 [GeekNews] 크롤링 시작...');
-    
     const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort();
-      console.log('  ⏱️ [GeekNews] 타임아웃 (10초)');
-    }, 10000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch('https://news.hada.io/rss', {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache'
       },
       signal: controller.signal
     });
     
     clearTimeout(timeout);
-    const elapsed = Date.now() - startTime;
 
     if (!response.ok) {
-      console.log(`  ❌ [GeekNews] HTTP ${response.status} ${response.statusText} (${elapsed}ms)`);
+      console.log(`  ⚠️ [GeekNews] HTTP ${response.status} - 스킵`);
       return [];
     }
 
     const xmlText = await response.text();
-    console.log(`  📦 [GeekNews] 응답 수신: ${(xmlText.length / 1024).toFixed(1)}KB (${elapsed}ms)`);
-
     const items: NewsArticle[] = [];
     const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
     let match;
-    let totalItems = 0;
 
     while ((match = itemRegex.exec(xmlText)) !== null && items.length < 5) {
-      totalItems++;
       const itemXml = match[1];
       
       let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
@@ -291,21 +280,18 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
       }
     }
 
-    console.log(`  ✅ [GeekNews] 성공: 총 ${totalItems}개 발견, ${items.length}개 파싱 (${elapsed}ms)`);
+    if (items.length > 0) {
+      console.log(`  ✅ [GeekNews] ${items.length}개 수집`);
+    }
     return items;
 
   } catch (error) {
-    console.log(`  ❌ [GeekNews] 에러`);
     return [];
   }
 }
 
 async function fetchGitHubTrending(): Promise<NewsArticle | null> {
-  const startTime = Date.now();
-  
   try {
-    console.log('  🐙 [GitHub] Trending 크롤링 시작...');
-    
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -331,7 +317,7 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
     if (sortedRepos.length === 0) return null;
 
     const topRepo = sortedRepos[0];
-    console.log(`  ✅ [GitHub] 성공: ${topRepo.name}`);
+    console.log(`  ✅ [GitHub] ${topRepo.name} 수집`);
     
     return {
       title: `🔥 ${topRepo.name}`,
@@ -348,8 +334,6 @@ async function fetchGitHubTrending(): Promise<NewsArticle | null> {
 
 async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
   try {
-    console.log(`  🔍 [네이버] "${interest}" 검색 시작...`);
-    
     const response = await fetch(
       `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(interest)}&display=10&sort=date`,
       {
@@ -364,8 +348,6 @@ async function fetchNaverNews(interest: string): Promise<NewsArticle[]> {
 
     const data = await response.json();
     const items = data.items || [];
-    
-    console.log(`  ✅ [네이버] 성공: ${items.length}개 검색됨`);
 
     return items.map((item: any) => ({
       title: item.title.replace(/<[^>]*>/g, ''),
@@ -398,16 +380,14 @@ async function sendEmailWithTracking(params: {
     return;
   }
 
-  // 기본 HTML 생성
   const originalHtml = generateEmailHTML(params);
 
-  // 트래킹 + 인터렉티브 요소 추가
   const enhancedHtml = enhanceNewsletterEmail(originalHtml, {
     sendId: params.sendId,
     userId: params.userId,
-    quiz: SAMPLE_QUIZZES[0], // 오늘의 퀴즈
-    poll: SAMPLE_POLLS[0],   // 독자 투표
-    includeRating: true       // 별점 피드백
+    quiz: SAMPLE_QUIZZES[0],
+    poll: SAMPLE_POLLS[0],
+    includeRating: true
   });
 
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -467,7 +447,7 @@ function generateEmailHTML(params: {
   });
 
   const interests = sections.map(s => s.interest).join(', ');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ftti-umber.vercel.app';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ftti-dpdtydz.vercel.app';
 
   return `
 <!DOCTYPE html>
