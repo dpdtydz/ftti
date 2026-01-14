@@ -97,28 +97,33 @@ export async function GET(request: Request) {
           const isITRelated = isITKeyword(interest);
 
           if (isITRelated) {
-            console.log('  🔍 IT 전문 뉴스 수집 시작...');
+            console.log('  🔍 IT 전문 RSS 수집 시작...');
             
-            // 네이버를 메인으로, GeekNews/GitHub는 보너스
-            const naverArticles = await fetchNaverNews(interest);
-            
-            // GeekNews와 GitHub는 실패해도 괜찮음
-            const [geekArticles, githubArticle] = await Promise.allSettled([
+            // IT 전문 소스들을 병렬로 수집
+            const [naverArticles, geekArticles, woowahanArticles, tossArticles, githubArticle] = await Promise.allSettled([
+              fetchNaverNews(interest),
               fetchGeekNews(),
+              fetchWoowahanTech(),
+              fetchTossTech(),
               fetchGitHubTrending()
             ]).then(results => [
               results[0].status === 'fulfilled' ? results[0].value : [],
-              results[1].status === 'fulfilled' ? results[1].value : null
+              results[1].status === 'fulfilled' ? results[1].value : [],
+              results[2].status === 'fulfilled' ? results[2].value : [],
+              results[3].status === 'fulfilled' ? results[3].value : [],
+              results[4].status === 'fulfilled' ? results[4].value : null
             ]);
             
-            // IT는 네이버 3개 + 보너스 1개
+            // IT는 네이버 2개 + 전문 RSS 2개 + GitHub 보너스
             articles = [
-              ...naverArticles.slice(0, 3),
-              ...(geekArticles.length > 0 ? geekArticles.slice(0, 1) : []),
+              ...naverArticles.slice(0, 2),
+              ...geekArticles.slice(0, 1),
+              ...woowahanArticles.slice(0, 1),
+              ...tossArticles.slice(0, 1),
               ...(githubArticle ? [githubArticle] : [])
-            ].slice(0, 4); // 최대 4개
+            ].slice(0, 5); // 최대 5개
             
-            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${Array.isArray(geekArticles) ? geekArticles.length : 0}개 | GitHub ${githubArticle ? 1 : 0}개`);
+            console.log(`  📊 수집 결과: 네이버 ${naverArticles.length}개 | GeekNews ${geekArticles.length}개 | 우아한 ${woowahanArticles.length}개 | 토스 ${tossArticles.length}개 | GitHub ${githubArticle ? 1 : 0}개`);
             console.log(`  ✅ 최종 선택: ${articles.length}개 뉴스`);
           } else {
             console.log('  🔍 네이버 뉴스 검색 중...');
@@ -226,17 +231,16 @@ function isITKeyword(interest: string): boolean {
   return itKeywords.some(keyword => interest.includes(keyword));
 }
 
-async function fetchGeekNews(): Promise<NewsArticle[]> {
+// 📡 RSS 파싱 공통 함수
+async function parseRSSFeed(url: string, sourceName: string, maxItems: number = 5): Promise<NewsArticle[]> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const response = await fetch('https://news.hada.io/rss', {
+    const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*'
       },
       signal: controller.signal
     });
@@ -244,7 +248,7 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
     clearTimeout(timeout);
 
     if (!response.ok) {
-      console.log(`  ⚠️ [GeekNews] HTTP ${response.status} - 스킵`);
+      console.log(`  ⚠️ [${sourceName}] HTTP ${response.status}`);
       return [];
     }
 
@@ -253,20 +257,27 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
     const itemRegex = /<item[\s>]([\s\S]*?)<\/item>/g;
     let match;
 
-    while ((match = itemRegex.exec(xmlText)) !== null && items.length < 5) {
+    while ((match = itemRegex.exec(xmlText)) !== null && items.length < maxItems) {
       const itemXml = match[1];
       
+      // 제목 추출
       let title = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] 
                 || itemXml.match(/<title>(.*?)<\/title>/)?.[1] 
                 || '';
       
-      let link = itemXml.match(/<link>(.*?)<\/link>/)?.[1] || '';
+      // 링크 추출
+      let link = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/)?.[1]
+              || itemXml.match(/<link>(.*?)<\/link>/)?.[1] 
+              || '';
       
+      // 설명 추출
       let description = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1]
                      || itemXml.match(/<description>(.*?)<\/description>/)?.[1]
                      || '';
       
+      // HTML 태그 제거
       title = title.replace(/<[^>]*>/g, '').trim();
+      link = link.trim();
       const cleanDescription = description.replace(/<[^>]*>/g, '').trim().substring(0, 200);
 
       if (title && link) {
@@ -274,20 +285,36 @@ async function fetchGeekNews(): Promise<NewsArticle[]> {
           title,
           description: cleanDescription,
           link,
-          source: 'GeekNews',
+          source: sourceName,
           pubDate: new Date().toISOString()
         });
       }
     }
 
     if (items.length > 0) {
-      console.log(`  ✅ [GeekNews] ${items.length}개 수집`);
+      console.log(`  ✅ [${sourceName}] ${items.length}개 수집`);
     }
     return items;
 
   } catch (error) {
+    console.log(`  ❌ [${sourceName}] 실패`);
     return [];
   }
+}
+
+// 🔥 GeekNews 공식 RSS
+async function fetchGeekNews(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://news.hada.io/rss/news', 'GeekNews', 5);
+}
+
+// 🍔 우아한형제들 기술블로그
+async function fetchWoowahanTech(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://techblog.woowahan.com/feed/', '우아한형제들', 3);
+}
+
+// 💳 토스 테크 블로그
+async function fetchTossTech(): Promise<NewsArticle[]> {
+  return parseRSSFeed('https://toss.tech/rss.xml', '토스', 3);
 }
 
 async function fetchGitHubTrending(): Promise<NewsArticle | null> {
