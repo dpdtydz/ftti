@@ -22,7 +22,7 @@ jobs:
       - name: Send 8AM KST Newsletter
         run: |
           echo "📧 Sending 8AM KST newsletter..."
-          curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=08:00" \
+          curl -X GET "https://ftti-dpdtydz.vercel.app/api/cron/send-newsletters?time=08:00" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
             -w "\nHTTP Status: %{http_code}\n"
@@ -35,7 +35,7 @@ jobs:
       - name: Send 10AM KST Newsletter
         run: |
           echo "📧 Sending 10AM KST newsletter..."
-          curl -X GET "https://ftti-umber.vercel.app/api/cron/send-newsletters?time=10:00" \
+          curl -X GET "https://ftti-dpdtydz.vercel.app/api/cron/send-newsletters?time=10:00" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json" \
             -w "\nHTTP Status: %{http_code}\n"
