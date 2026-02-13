@@ -1,3 +1,5 @@
+import toast from 'react-hot-toast';
+
 interface Interest {
     id: string;
     name: string;
@@ -9,11 +11,18 @@ interface InterestSettingsProps {
 }
 
 export function InterestSettings({ interests }: InterestSettingsProps) {
+    const handleEdit = () => {
+        toast('관심사 수정 기능은 준비 중입니다.', { icon: 'ℹ️' });
+    };
+
     return (
         <div className="bg-white rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold text-gray-900">내 관심사</h2>
-                <button className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+                <button
+                    onClick={handleEdit}
+                    className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+                >
                     수정
                 </button>
             </div>

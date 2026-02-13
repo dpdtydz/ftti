@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogOut } from 'lucide-react';
+import { LogOut, Settings2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import toast from 'react-hot-toast';
 
 import { StatsCards } from './components/StatsCards';
 import { ReferralCTA } from './components/ReferralCTA';
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<any>(null);
   const [interests, setInterests] = useState<Interest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [confirmActions, setConfirmActions] = useState(true);
   const [stats, setStats] = useState({
     newsletterCount: 0,
     daysJoined: 0,
@@ -61,6 +63,7 @@ export default function DashboardPage() {
 
       setProfile(profileData);
       setIsActive(profileData.is_active);
+      setConfirmActions(profileData.confirm_actions ?? true);
 
       // Time Validation
       const currentTime = profileData.send_time?.slice(0, 5) || '08:00';
@@ -86,7 +89,6 @@ export default function DashboardPage() {
       setInterests(formattedInterests);
 
       // Load Stats
-      // 1. Newsletter Count
       const { count: newsletterCount } = await supabase
         .from('newsletter_sends')
         .select('*', { count: 'exact', head: true })
@@ -103,8 +105,27 @@ export default function DashboardPage() {
 
     } catch (error) {
       console.error('Error loading data:', error);
+      toast.error('데이터 로딩 중 오류가 발생했습니다.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleToggleConfirm = async () => {
+    const newValue = !confirmActions;
+    setConfirmActions(newValue);
+
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ confirm_actions: newValue })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      toast.success(newValue ? '확인창이 활성화되었습니다.' : '확인창이 비활성화되었습니다.');
+    } catch (error) {
+      toast.error('설정 저장 실패');
+      setConfirmActions(!newValue);
     }
   };
 
@@ -112,26 +133,44 @@ export default function DashboardPage() {
     const newValue = !isActive;
     setIsActive(newValue);
 
-    await supabase
-      .from('user_profiles')
-      .update({ is_active: newValue })
-      .eq('id', user.id);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ is_active: newValue })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      toast.success(newValue ? '뉴스레터 발송이 활성화되었습니다.' : '뉴스레터 발송이 중지되었습니다.');
+    } catch (error) {
+      toast.error('설정 변경 실패');
+      setIsActive(!newValue);
+    }
   };
 
   const handleTimeChange = async (newTime: string) => {
     setSendTime(newTime);
 
-    await supabase
-      .from('user_profiles')
-      .update({
-        send_time: newTime + ':00',
-        preferred_send_time: newTime // Sync preferred time
-      })
-      .eq('id', user.id);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({
+          send_time: newTime + ':00',
+          preferred_send_time: newTime
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      toast.success(`발송 시간이 ${newTime}으로 변경되었습니다.`);
+    } catch (error) {
+      toast.error('시간 변경 실패');
+    }
   };
 
   const handleLogout = async () => {
+    if (confirmActions && !confirm('로그아웃 하시겠습니까?')) return;
+
     await supabase.auth.signOut();
+    toast.success('로그아웃 되었습니다.');
     router.push('/');
   };
 
@@ -152,10 +191,22 @@ export default function DashboardPage() {
             FTTI
           </Link>
           <div className="flex items-center gap-4">
+            {/* Global confirm toggle */}
+            <div className="hidden sm:flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-full border border-gray-200 mr-2">
+              <Settings2 className="w-4 h-4 text-gray-400" />
+              <span className="text-xs font-medium text-gray-500">확인창</span>
+              <button
+                onClick={handleToggleConfirm}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${confirmActions ? 'bg-indigo-600' : 'bg-gray-300'}`}
+              >
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${confirmActions ? 'translate-x-5' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
             <span className="text-gray-600 hidden md:block">{profile?.nickname || user?.email}님</span>
             <button
               onClick={handleLogout}
-              className="text-gray-500 hover:text-gray-700 p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="text-gray-500 hover:text-red-600 p-2 hover:bg-red-50 rounded-full transition-colors"
               title="로그아웃"
             >
               <LogOut className="w-5 h-5" />
@@ -174,7 +225,6 @@ export default function DashboardPage() {
         <ReferralCTA />
 
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Left Column - Settings */}
           <div className="lg:col-span-1 space-y-6">
             <InterestSettings interests={interests} />
             <SendTimeSettings
@@ -186,7 +236,6 @@ export default function DashboardPage() {
             />
           </div>
 
-          {/* Right Column - Newsletter History */}
           <div className="lg:col-span-2">
             <NewsletterHistory userId={user?.id} />
           </div>
@@ -195,4 +244,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

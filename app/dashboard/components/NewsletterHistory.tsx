@@ -1,6 +1,7 @@
 import { Mail, ArrowRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 
 interface NewsletterSend {
     id: string;
@@ -18,6 +19,10 @@ interface NewsletterHistoryProps {
 export function NewsletterHistory({ userId }: NewsletterHistoryProps) {
     const [newsletters, setNewsletters] = useState<NewsletterSend[]>([]);
     const [loading, setLoading] = useState(true);
+
+    const handleViewAll = () => {
+        toast('전체 내역 보기 기능은 준비 중입니다.', { icon: 'ℹ️' });
+    };
 
     useEffect(() => {
         if (userId) {
@@ -74,7 +79,7 @@ export function NewsletterHistory({ userId }: NewsletterHistoryProps) {
                             className="group flex items-start gap-4 p-4 rounded-lg border border-gray-100 hover:border-indigo-100 hover:bg-indigo-50 transition-all cursor-pointer"
                         >
                             <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${newsletter.clicked_at ? 'bg-green-500' :
-                                    newsletter.opened_at ? 'bg-blue-500' : 'bg-gray-300'
+                                newsletter.opened_at ? 'bg-blue-500' : 'bg-gray-300'
                                 }`} />
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-sm font-medium text-gray-900 truncate pr-4">

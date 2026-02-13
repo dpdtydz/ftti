@@ -10,14 +10,15 @@
     "test:newsletter": "node --no-deprecation -r tsx/register scripts/test-newsletter.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "@getbrevo/brevo": "^2.2.0",
+    "@google/generative-ai": "^0.21.0",
     "@supabase/supabase-js": "^2.39.0",
     "groq-sdk": "^0.7.0",
     "lucide-react": "^0.303.0",
     "next": "14.0.4",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "react-hot-toast": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "^20",

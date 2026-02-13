@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Copy, Check, Gift, Users, TrendingUp, Send, Trash2, Mail } from 'lucide-react';
+import { Copy, Check, Gift, Users, TrendingUp, Send, Trash2, Mail, Settings2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface Referral {
   id: string;
@@ -24,6 +25,7 @@ export default function ReferralPage() {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [confirmActions, setConfirmActions] = useState(true);
 
   useEffect(() => {
     checkUser();
@@ -45,24 +47,16 @@ export default function ReferralPage() {
 
   const loadReferralData = async (userId: string) => {
     try {
-      // 1. 내 추천 코드 가져오기 (프로필에서)
+      // 1. 내 추천 코드 및 설정 가져오기
       const { data: profile } = await supabase
         .from('user_profiles')
-        .select('referral_code')
+        .select('referral_code, confirm_actions')
         .eq('id', userId)
         .single();
 
-      if (profile?.referral_code) {
-        setReferralCode(profile.referral_code);
-      } else {
-        // 코드가 없으면 생성 요청 (예외 처리용)
-        const res = await fetch('/api/referral/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId }),
-        });
-        const data = await res.json();
-        if (data.referralCode) setReferralCode(data.referralCode);
+      if (profile) {
+        setReferralCode(profile.referral_code || '');
+        setConfirmActions(profile.confirm_actions ?? true);
       }
 
       // 2. 추천 현황 가져오기
@@ -81,11 +75,30 @@ export default function ReferralPage() {
     }
   };
 
+  const handleToggleConfirm = async () => {
+    const newValue = !confirmActions;
+    setConfirmActions(newValue);
+
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ confirm_actions: newValue })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      toast.success(newValue ? '확인창이 활성화되었습니다.' : '확인창이 비활성화되었습니다.');
+    } catch (error) {
+      toast.error('설정 저장 실패');
+      setConfirmActions(!newValue);
+    }
+  };
+
   const handleCopy = () => {
     const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
     const shareUrl = `${appUrl}?ref=${referralCode}`;
     navigator.clipboard.writeText(shareUrl);
     setCopied(true);
+    toast.success('초대 링크가 복사되었습니다!');
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -93,8 +106,11 @@ export default function ReferralPage() {
     e.preventDefault();
     if (!inviteEmail || !user) return;
 
-    setSending(true);
-    try {
+    if (confirmActions && !confirm(`${inviteEmail}님에게 전송하시겠습니까?`)) {
+      return;
+    }
+
+    const invitePromise = (async () => {
       const res = await fetch('/api/referral/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -106,49 +122,49 @@ export default function ReferralPage() {
       });
 
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '초대 발송 실패');
 
-      if (!res.ok) {
-        alert(data.error || '초대 발송 실패');
-        return;
-      }
-
-      alert('초대장이 기록되었습니다!');
       setInviteEmail('');
-      loadReferralData(user.id); // 목록 갱신
-    } catch (error) {
-      console.error('Invite error:', error);
-      alert('오류가 발생했습니다.');
-    } finally {
-      setSending(false);
-    }
+      loadReferralData(user.id);
+      return data;
+    })();
+
+    toast.promise(invitePromise, {
+      loading: '기록 중...',
+      success: '초대장이 기록되었습니다!',
+      error: (err) => err.message
+    });
   };
 
   const handleDeleteInvite = async (referralId: string) => {
-    if (!confirm('정말 이 초대를 취소하시겠습니까?')) return;
+    if (confirmActions && !confirm('정말 이 초대를 취소하시겠습니까?')) {
+      return;
+    }
 
-    try {
+    const deletePromise = (async () => {
       const res = await fetch(`/api/referral/invite?id=${referralId}&userId=${user.id}`, {
         method: 'DELETE',
       });
 
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || '삭제 실패');
-        return;
+        throw new Error(data.error || '삭제 실패');
       }
 
-      // 목록 갱신
       setReferrals(prev => prev.filter(r => r.id !== referralId));
-    } catch (error) {
-      console.error('Delete error:', error);
-      alert('오류가 발생했습니다.');
-    }
+    })();
+
+    toast.promise(deletePromise, {
+      loading: '삭제 중...',
+      success: '초대가 취소되었습니다.',
+      error: (err) => err.message
+    });
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-gray-500">로딩 중...</div>
+        <div className="text-gray-500 animate-pulse">로딩 중...</div>
       </div>
     );
   }
@@ -160,9 +176,23 @@ export default function ReferralPage() {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <div className="flex items-center gap-3 mb-8">
-        <Gift className="w-8 h-8 text-indigo-600" />
-        <h1 className="text-2xl font-bold text-gray-900">친구 초대하고 혜택 받기</h1>
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-3">
+          <Gift className="w-8 h-8 text-indigo-600" />
+          <h1 className="text-2xl font-bold text-gray-900">친구 초대 관리</h1>
+        </div>
+
+        {/* Toggle Setting */}
+        <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-full border border-gray-200">
+          <Settings2 className="w-4 h-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-700">확인창 띄우기</span>
+          <button
+            onClick={handleToggleConfirm}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${confirmActions ? 'bg-indigo-600' : 'bg-gray-300'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${confirmActions ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
       </div>
 
       {/* Stats Overview */}
@@ -239,22 +269,18 @@ export default function ReferralPage() {
               />
               <button
                 type="submit"
-                disabled={sending}
                 className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-2 shrink-0"
               >
-                {sending ? '기록 중...' : '초대 보내기'}
-                {!sending && <Send className="w-4 h-4" />}
+                초대 보내기
+                <Send className="w-4 h-4" />
               </button>
             </form>
-            <p className="mt-3 text-xs text-gray-500">
-              * 초대장을 보내면 친구가 가입할 때까지 대기 목록에 표시됩니다.
-            </p>
           </div>
         </div>
 
         {/* History Section */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col min-h-[400px]">
             <div className="p-6 border-b border-gray-100">
               <h2 className="text-lg font-semibold">초대 현황</h2>
             </div>
