@@ -106,6 +106,11 @@ export default function ReferralPage() {
     e.preventDefault();
     if (!inviteEmail || !user) return;
 
+    if (!referralCode) {
+      toast.error('내 추천 코드를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+
     if (confirmActions && !confirm(`${inviteEmail}님에게 전송하시겠습니까?`)) {
       return;
     }
@@ -296,7 +301,7 @@ export default function ReferralPage() {
                     <div key={referral.id} className="p-4 flex items-center justify-between hover:bg-gray-50 group">
                       <div className="flex items-center gap-3">
                         <div className={`w-2 h-2 rounded-full ${referral.status === 'completed' || referral.status === 'rewarded' ? 'bg-green-500' :
-                            referral.status === 'pending' ? 'bg-yellow-500' : 'bg-gray-300'
+                          referral.status === 'pending' ? 'bg-yellow-500' : 'bg-gray-300'
                           }`} />
                         <div>
                           <p className="font-medium text-gray-900 text-sm truncate max-w-[120px]">
