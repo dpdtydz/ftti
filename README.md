@@ -228,21 +228,21 @@ gantt
     title FTTI 프로젝트 개발 일정
     dateFormat  YYYY-MM-DD
     section MVP (핵심 기능)
-    프로젝트 설정 & DB 스키마       :done,    task1, 2024-01-01, 7d
-    인증 통합 (Auth)               :done,    task2, 2024-01-08, 3d
-    뉴스레터 엔진 (Groq/Gemini)    :done,    task3, 2024-01-11, 7d
-    이메일 발송 & 크론 (Cron)      :done,    task4, 2024-01-18, 5d
+    프로젝트 설정 & DB 스키마       :done,    task1, 2026-01-01, 7d
+    인증 통합 (Auth)               :done,    task2, 2026-01-08, 3d
+    뉴스레터 엔진 (Groq/Gemini)    :done,    task3, 2026-01-11, 7d
+    이메일 발송 & 크론 (Cron)      :done,    task4, 2026-01-18, 5d
     
     section 성장 & 참여
-    추천 시스템 (DB & API)         :done,    task5, 2024-01-23, 7d
-    이메일 트래킹 & 피드백         :done,    task6, 2024-01-30, 5d
-    대시보드 기본 UI               :done,    task7, 2024-02-04, 5d
+    추천 시스템 (DB & API)         :done,    task5, 2026-01-23, 7d
+    이메일 트래킹 & 피드백         :done,    task6, 2026-01-30, 5d
+    대시보드 기본 UI               :done,    task7, 2026-02-04, 5d
     
     section 최적화 & 확장
-    대시보드 고급 통계             :active,  task8, 2024-02-14, 5d
+    대시보드 고급 통계             :active,  task8, 2026-02-14, 5d
     프리미엄 플랜 (결제)           :         task9, after task8, 7d
-    모바일 앱 (React Native)       :         task10, 2024-03-01, 14d
-    랜딩 페이지 최적화             :         task11, 2024-02-15, 5d
+    모바일 앱 (React Native)       :         task10, 2026-03-01, 14d
+    랜딩 페이지 최적화             :         task11, 2026-02-15, 5d
 ```
 
 ### ✅ 완료된 작업 (Completed)
