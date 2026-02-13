@@ -3,8 +3,14 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Mail, Calendar, LogOut, Bell, BellOff, Clock, Sparkles, Gift, Users } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+
+import { StatsCards } from './components/StatsCards';
+import { ReferralCTA } from './components/ReferralCTA';
+import { InterestSettings } from './components/InterestSettings';
+import { SendTimeSettings } from './components/SendTimeSettings';
+import { NewsletterHistory } from './components/NewsletterHistory';
 
 interface Interest {
   id: string;
@@ -20,6 +26,11 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<any>(null);
   const [interests, setInterests] = useState<Interest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [stats, setStats] = useState({
+    newsletterCount: 0,
+    daysJoined: 0,
+    interestCount: 0
+  });
 
   useEffect(() => {
     loadUserData();
@@ -28,12 +39,12 @@ export default function DashboardPage() {
   const loadUserData = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      
+
       if (!user) {
         router.push('/login');
         return;
       }
-      
+
       setUser(user);
 
       // Load profile
@@ -50,13 +61,12 @@ export default function DashboardPage() {
 
       setProfile(profileData);
       setIsActive(profileData.is_active);
-      
-      // 기존 시간이 09:00이면 10:00으로 변경
+
+      // Time Validation
       const currentTime = profileData.send_time?.slice(0, 5) || '08:00';
       const validTime = ['08:00', '10:00'].includes(currentTime) ? currentTime : '08:00';
       setSendTime(validTime);
-      
-      // DB도 업데이트
+
       if (currentTime !== validTime) {
         await supabase
           .from('user_profiles')
@@ -70,10 +80,27 @@ export default function DashboardPage() {
         .select('interest_id, interests(id, name, emoji)')
         .eq('user_id', user.id);
 
-      if (userInterests) {
-        const formattedInterests = userInterests.map((ui: any) => ui.interests);
-        setInterests(formattedInterests);
-      }
+      const formattedInterests = userInterests
+        ? userInterests.map((ui: any) => ui.interests)
+        : [];
+      setInterests(formattedInterests);
+
+      // Load Stats
+      // 1. Newsletter Count
+      const { count: newsletterCount } = await supabase
+        .from('newsletter_sends')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'sent');
+
+      setStats({
+        newsletterCount: newsletterCount || 0,
+        daysJoined: profileData.created_at
+          ? Math.floor((Date.now() - new Date(profileData.created_at).getTime()) / (1000 * 60 * 60 * 24)) + 1
+          : 1,
+        interestCount: formattedInterests.length
+      });
+
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -84,7 +111,7 @@ export default function DashboardPage() {
   const handleToggleActive = async () => {
     const newValue = !isActive;
     setIsActive(newValue);
-    
+
     await supabase
       .from('user_profiles')
       .update({ is_active: newValue })
@@ -93,10 +120,13 @@ export default function DashboardPage() {
 
   const handleTimeChange = async (newTime: string) => {
     setSendTime(newTime);
-    
+
     await supabase
       .from('user_profiles')
-      .update({ send_time: newTime + ':00' })
+      .update({
+        send_time: newTime + ':00',
+        preferred_send_time: newTime // Sync preferred time
+      })
       .eq('id', user.id);
   };
 
@@ -108,28 +138,25 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-500">로딩 중...</div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
       </div>
     );
   }
 
-  const joinedDays = profile?.created_at 
-    ? Math.floor((Date.now() - new Date(profile.created_at).getTime()) / (1000 * 60 * 60 * 24)) + 1
-    : 1;
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="text-2xl font-bold text-indigo-600">
+          <Link href="/" className="text-2xl font-bold text-indigo-600 hover:text-indigo-700 transition-colors">
             FTTI
           </Link>
           <div className="flex items-center gap-4">
-            <span className="text-gray-600">{profile?.nickname || user?.email}님</span>
-            <button 
+            <span className="text-gray-600 hidden md:block">{profile?.nickname || user?.email}님</span>
+            <button
               onClick={handleLogout}
-              className="text-gray-500 hover:text-gray-700"
+              className="text-gray-500 hover:text-gray-700 p-2 hover:bg-gray-100 rounded-full transition-colors"
+              title="로그아웃"
             >
               <LogOut className="w-5 h-5" />
             </button>
@@ -137,174 +164,35 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Stats Cards */}
-        <div className="grid md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
-                <Mail className="w-6 h-6 text-indigo-600" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-gray-900">0</p>
-                <p className="text-gray-500">받은 뉴스레터</p>
-              </div>
-            </div>
-          </div>
+      <main className="container mx-auto px-4 py-8 max-w-6xl">
+        <StatsCards
+          newsletterCount={stats.newsletterCount}
+          daysJoined={stats.daysJoined}
+          interestCount={stats.interestCount}
+        />
 
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                <Calendar className="w-6 h-6 text-green-600" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-gray-900">{joinedDays}일</p>
-                <p className="text-gray-500">가입 후 경과</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                <Sparkles className="w-6 h-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-gray-900">{interests.length}개</p>
-                <p className="text-gray-500">관심사</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Referral CTA - 새로 추가! */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl p-6 shadow-lg text-white">
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center backdrop-blur">
-                  <Gift className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold mb-2">친구 초대하고 보상 받기 🎁</h3>
-                  <p className="text-white/90 mb-4">
-                    친구 1명 초대 시 프리미엄 1주일 무료! 지금 바로 시작하세요.
-                  </p>
-                  <div className="flex gap-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      <span>1명 → 1주일</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      <span>3명 → 1개월</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      <span>10명 → 3개월</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <Link
-                href="/dashboard/referral"
-                className="px-6 py-3 bg-white text-indigo-600 rounded-lg font-medium hover:bg-gray-50 transition-colors whitespace-nowrap"
-              >
-                초대하기
-              </Link>
-            </div>
-          </div>
-        </div>
+        <ReferralCTA />
 
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Left Column - Settings */}
           <div className="lg:col-span-1 space-y-6">
-            {/* Interests */}
-            <div className="bg-white rounded-xl p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">내 관심사</h2>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {interests.map((interest) => (
-                  <span
-                    key={interest.id}
-                    className="px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm"
-                  >
-                    {interest.emoji} {interest.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Send Settings */}
-            <div className="bg-white rounded-xl p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                발송 설정
-              </h2>
-
-              {/* Active Toggle */}
-              <div className="flex items-center justify-between py-3 border-b border-gray-100">
-                <div className="flex items-center gap-3">
-                  {isActive ? (
-                    <Bell className="w-5 h-5 text-indigo-600" />
-                  ) : (
-                    <BellOff className="w-5 h-5 text-gray-400" />
-                  )}
-                  <span className="text-gray-700">뉴스레터 받기</span>
-                </div>
-                <button
-                  onClick={handleToggleActive}
-                  className={`relative w-12 h-6 rounded-full transition-colors ${
-                    isActive ? 'bg-indigo-600' : 'bg-gray-300'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${
-                      isActive ? 'left-7' : 'left-1'
-                    }`}
-                  />
-                </button>
-              </div>
-
-              {/* Time Setting */}
-              <div className="py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-5 h-5 text-gray-500" />
-                    <span className="text-gray-700">발송 시간</span>
-                  </div>
-                  <select
-                    value={sendTime}
-                    onChange={(e) => handleTimeChange(e.target.value)}
-                    className="px-3 py-1 border border-gray-300 rounded-lg text-gray-700"
-                  >
-                    <option value="08:00">오전 8:00 (08:00)</option>
-                    <option value="10:00">오전 10:00 (10:00)</option>
-                  </select>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  📬 출근길에 읽기 좋은 시간
-                </p>
-              </div>
-            </div>
+            <InterestSettings interests={interests} />
+            <SendTimeSettings
+              isActive={isActive}
+              sendTime={sendTime}
+              onToggleActive={handleToggleActive}
+              onTimeChange={handleTimeChange}
+              isLoading={isLoading}
+            />
           </div>
 
-          {/* Right Column - Recent Newsletters */}
+          {/* Right Column - Newsletter History */}
           <div className="lg:col-span-2">
-            <div className="bg-white rounded-xl p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-gray-900 mb-6">
-                최근 받은 뉴스레터
-              </h2>
-
-              <div className="text-center py-12 text-gray-500">
-                <Mail className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                <p>아직 받은 뉴스레터가 없어요</p>
-                <p className="text-sm">내일 아침부터 받아보세요!</p>
-              </div>
-            </div>
+            <NewsletterHistory userId={user?.id} />
           </div>
         </div>
       </main>
     </div>
   );
 }
+

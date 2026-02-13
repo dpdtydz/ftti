@@ -43,22 +43,30 @@ export async function GET(req: NextRequest) {
 
     if (!existing) {
       // 오픈 이벤트 기록
-      await supabase.from('email_events').insert({
-        newsletter_send_id: sendId,
-        user_id: userId,
-        event_type: 'opened',
-        user_agent: req.headers.get('user-agent'),
-        ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip'),
-      });
+      // try-catch로 감싸서 로깅 실패가 픽셀 반환을 막지 않도록 함
+      try {
+        await supabase.from('email_events').insert({
+          newsletter_send_id: sendId,
+          user_id: userId,
+          event_type: 'opened',
+          user_agent: req.headers.get('user-agent'),
+          ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
+        });
+      } catch (err) {
+        console.error('Failed to log open event:', err);
+      }
     }
 
     // 1x1 투명 픽셀 반환
     return new NextResponse(PIXEL_GIF, {
       headers: {
         'Content-Type': 'image/gif',
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       },
     });
+
   } catch (error) {
     console.error('Error tracking email open:', error);
     // 에러가 발생해도 픽셀은 반환

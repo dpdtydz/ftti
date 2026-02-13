@@ -17,36 +17,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 추천 코드 생성
-    const { data: codeData, error: codeError } = await supabase
-      .rpc('generate_referral_code', { user_id: userId });
+    // 1. 사용자 프로필에서 추천 코드 가져오기 (없으면 생성)
+    // RPC 함수 호출 (migration에서 정의함)
+    // CREATE OR REPLACE FUNCTION get_or_create_referral_code(uid UUID) ...
+    const { data: code, error: rpcError } = await supabase
+      .rpc('get_or_create_referral_code', { uid: userId });
 
-    if (codeError) throw codeError;
+    if (rpcError) {
+      console.error('RPC Error:', rpcError);
+      // Fallback: 직접 조회 및 생성 로직 (RPC가 없을 경우 대비)
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('referral_code')
+        .eq('id', userId)
+        .single();
 
-    const referralCode = codeData;
-
-    // referrals 테이블에 저장 (pending 상태)
-    const { data, error } = await supabase
-      .from('referrals')
-      .insert({
-        referrer_id: userId,
-        referral_code: referralCode,
-        referred_email: '', // 아직 모름
-        status: 'pending'
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
+      if (profile?.referral_code) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+        return NextResponse.json({
+          success: true,
+          code: profile.referral_code,
+          link: `${appUrl}?ref=${profile.referral_code}`,
+          referral: null // 더 이상 개별 referral row를 반환하지 않음
+        });
+      }
+      throw rpcError;
+    }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const referralLink = `${appUrl}?ref=${referralCode}`;
+    const referralLink = `${appUrl}?ref=${code}`;
 
     return NextResponse.json({
       success: true,
-      code: referralCode,
+      code: code,
       link: referralLink,
-      referral: data
+      referral: null
     });
   } catch (error: any) {
     console.error('Error generating referral code:', error);

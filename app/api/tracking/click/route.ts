@@ -26,27 +26,32 @@ export async function GET(req: NextRequest) {
 
     // 클릭 이벤트 기록
     if (sendId && userId) {
-      await supabase.from('email_events').insert({
-        newsletter_send_id: sendId,
-        user_id: userId,
-        event_type: 'clicked',
-        url: targetUrl,
-        user_agent: req.headers.get('user-agent'),
-        ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip'),
-      });
+      try {
+        // Fire and await to ensure logging, but don't block redirect on error
+        await supabase.from('email_events').insert({
+          newsletter_send_id: sendId,
+          user_id: userId,
+          event_type: 'clicked',
+          url: targetUrl,
+          user_agent: req.headers.get('user-agent'),
+          ip_address: req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown',
+        });
+      } catch (err) {
+        console.error('Failed to log click:', err);
+      }
     }
 
     // 원본 URL로 리디렉션
     return NextResponse.redirect(targetUrl);
   } catch (error) {
     console.error('Error tracking email click:', error);
-    
+
     // 에러가 발생해도 리디렉션은 수행
     const targetUrl = new URL(req.url).searchParams.get('url');
     if (targetUrl) {
       return NextResponse.redirect(targetUrl);
     }
-    
+
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

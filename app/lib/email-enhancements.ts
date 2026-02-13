@@ -28,15 +28,21 @@ export function generateClickTrackingUrl(
  */
 export function addClickTracking(html: string, sendId: string, userId: string): string {
   // 모든 <a> 태그의 href를 트래킹 URL로 교체
+  // 정규식 개선: href 속성을 더 정밀하게 찾음 (공백 허용 등)
   return html.replace(
-    /href=["']([^"']+)["']/g,
-    (match, url) => {
-      // 이미 트래킹 URL이거나 mailto, tel 등은 제외
-      if (url.includes('/api/tracking/') || url.startsWith('mailto:') || url.startsWith('tel:')) {
+    /<a\s+(?:[^>]*?\s+)?href=(["'])(.*?)\1/gi,
+    (match, quote, url) => {
+      // 이미 트래킹 URL이거나 mailto, tel, anchor 링크(#)는 제외
+      if (
+        url.includes('/api/tracking/') ||
+        url.startsWith('mailto:') ||
+        url.startsWith('tel:') ||
+        url.startsWith('#')
+      ) {
         return match;
       }
       const trackingUrl = generateClickTrackingUrl(url, sendId, userId);
-      return `href="${trackingUrl}"`;
+      return match.replace(url, trackingUrl);
     }
   );
 }

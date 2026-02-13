@@ -17,73 +17,99 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 추천 코드 찾기
-    const { data: referral, error: findError } = await supabase
-      .from('referrals')
-      .select('*')
+    // 1. 추천 코드 소유자 찾기 (user_profiles에서)
+    const { data: referrerProfile, error: findError } = await supabase
+      .from('user_profiles')
+      .select('id, email')
       .eq('referral_code', code)
-      .eq('status', 'pending')
       .single();
 
-    if (findError || !referral) {
+    if (findError || !referrerProfile) {
       return NextResponse.json(
-        { error: 'Invalid or already used referral code' },
+        { error: 'Invalid referral code' },
         { status: 404 }
       );
     }
 
-    // 추천 완료 처리
-    const { data: updated, error: updateError } = await supabase
+    const referrerId = referrerProfile.id;
+
+    // 2. 자기 자신 추천 방지
+    if (referrerId === newUserId) {
+      return NextResponse.json(
+        { error: 'Cannot refer yourself' },
+        { status: 400 }
+      );
+    }
+
+    // 3. 이미 추천받은 적이 있는지 확인 (중복 가입 방지)
+    const { data: existing } = await supabase
       .from('referrals')
-      .update({
-        referred_email: newUserEmail,
+      .select('id')
+      .eq('referred_user_id', newUserId)
+      .single();
+
+    if (existing) {
+      return NextResponse.json(
+        { error: 'User already referred' },
+        { status: 400 }
+      );
+    }
+
+    // 4. 새로운 추천 기록 생성 (Completed 상태로 바로 저장)
+    const { data: updated, error: insertError } = await supabase
+      .from('referrals')
+      .insert({
+        referrer_id: referrerId,
         referred_user_id: newUserId,
+        referred_email: newUserEmail,
+        referral_code: code,
         status: 'completed',
         completed_at: new Date().toISOString()
       })
-      .eq('id', referral.id)
       .select()
       .single();
 
-    if (updateError) throw updateError;
+    if (insertError) throw insertError;
 
-    // 추천인의 성공한 추천 수 확인
-    const { data: referrals, error: countError } = await supabase
+    // 5. 추천인의 성공한 추천 수 확인
+    const { count: successfulReferrals, error: countError } = await supabase
       .from('referrals')
-      .select('id')
-      .eq('referrer_id', referral.referrer_id)
-      .eq('status', 'completed');
+      .select('*', { count: 'exact', head: true })
+      .eq('referrer_id', referrerId)
+      .eq('status', 'completed'); // rewarded 상태도 포함해야 하나? 로직에 따라 다름. 일단 completed만으로 계산하거나 rewarded 포함.
 
     if (countError) throw countError;
 
-    const successfulReferrals = referrals?.length || 0;
+    const totalCount = successfulReferrals || 0;
 
     // 보상 결정
     let rewardType = null;
-    if (successfulReferrals >= 10) {
+    // 단순화된 보상 로직: 1, 3, 10명째에만 보상 지급? 아니면 누적?
+    // 기존 로직 유지: 달성 시점마다 업데이트
+    if (totalCount === 10) {
       rewardType = 'premium_3months';
-    } else if (successfulReferrals >= 3) {
+    } else if (totalCount === 3) {
       rewardType = 'premium_month';
-    } else if (successfulReferrals >= 1) {
+    } else if (totalCount === 1) {
       rewardType = 'premium_week';
     }
 
-    // 보상이 있다면 업데이트
+    // 보상이 있다면 해당 건에 기록 (마지막 건에 기록하여 중복 지급 방지)
     if (rewardType) {
       await supabase
         .from('referrals')
         .update({
           reward_type: rewardType,
-          status: 'rewarded',
+          status: 'rewarded', // 상태 변경
           reward_claimed_at: new Date().toISOString()
         })
-        .eq('id', referral.id);
+        .eq('id', updated.id);
     }
 
     return NextResponse.json({
       success: true,
       referral: updated,
-      totalSuccessfulReferrals: successfulReferrals,
+      totalSuccessfulReferrals: totalCount,
       rewardEarned: rewardType
     });
   } catch (error: any) {
